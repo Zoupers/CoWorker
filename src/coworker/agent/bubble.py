@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from coworker.brain.brain import Brain
-    from coworker.core.types import Message
+    from coworker.core.types import Message, PinnedItem
     from coworker.memory.memory_tree import MemoryBlockTree
 
 
@@ -42,6 +42,11 @@ class Bubble:
     partial_results: list[str] = field(default_factory=list)
     checkpoint_count: int = 0
     initial_max_cycles: int = 0
+    # 已经从超时状态恢复并继续执行的次数。恢复仍复用同一 bubble id 与上下文。
+    resume_count: int = 0
+    last_resumed_at: datetime | None = None
+    # 泡泡自己的 pinned context；超时后续跑时需要一并恢复，不能只保留消息列表。
+    pinned_items: list[PinnedItem] = field(default_factory=list, repr=False)
     inbox: asyncio.Queue = field(default_factory=asyncio.Queue, repr=False)
     task: asyncio.Task | None = field(default=None, repr=False)
     brain: Brain | None = field(default=None, repr=False)
@@ -62,10 +67,16 @@ class Bubble:
 class BubbleStore:
     _MAX_HISTORY = 20
 
-    def __init__(self, max_concurrent: int = 5) -> None:
+    def __init__(
+        self,
+        max_concurrent: int = 5,
+        timeout_resume_seconds: int = 300,
+    ) -> None:
         self._active: dict[str, Bubble] = {}
         self._history: list[Bubble] = []
         self.max_concurrent = max_concurrent
+        # 0 表示禁用超时泡泡续跑；负数同样按禁用处理，避免异常配置放开限制。
+        self.timeout_resume_seconds = max(0, timeout_resume_seconds)
 
     def create(
         self,
@@ -112,6 +123,63 @@ class BubbleStore:
         self._history.append(bubble)
         if len(self._history) > self._MAX_HISTORY:
             self._history = self._history[-self._MAX_HISTORY :]
+
+    def resume(
+        self,
+        bubble_id: str,
+        *,
+        additional_cycles: int,
+        max_cycles_cap: int,
+    ) -> Bubble | str:
+        """Reactivate a recently timed-out bubble with an expanded cumulative budget.
+
+        The caller starts the new mini-loop only after this method succeeds.  Keeping
+        the state transition in the store makes the concurrent-capacity check atomic
+        from the event loop's perspective and prevents two callers from resuming the
+        same bubble at once.
+        """
+        bubble = self.get(bubble_id)
+        if bubble is None:
+            return f"未找到泡泡 [{bubble_id}]"
+        if bubble.status != "timeout":
+            return f"泡泡 {bubble_id} 当前状态为 {bubble.status}，只有超时泡泡可以续跑。"
+        if bubble.id in self._active:
+            return f"泡泡 {bubble_id} 正在结束清理，请稍后重试。"
+        if bubble.task is not None and not bubble.task.done():
+            return f"泡泡 {bubble_id} 仍在结束清理，请稍后重试。"
+        if bubble.finished_at is None:
+            return f"泡泡 {bubble_id} 缺少超时完成时间，无法安全续跑。"
+        if self.timeout_resume_seconds <= 0:
+            return "泡泡超时续跑已禁用（AGENT__BUBBLE_TIMEOUT_RESUME_SECONDS=0）。"
+
+        now = datetime.now()
+        elapsed = max(0.0, (now - bubble.finished_at).total_seconds())
+        if elapsed > self.timeout_resume_seconds:
+            return (
+                f"泡泡 {bubble_id} 超时后已过去 {elapsed:.0f}s，"
+                f"超过可续跑窗口 {self.timeout_resume_seconds}s。"
+            )
+        if len(self._active) >= self.max_concurrent:
+            active_ids = ", ".join(self._active.keys())
+            return (
+                f"已达到最大并发泡泡数（{self.max_concurrent}）。"
+                f"当前活跃：{active_ids}。请等待或取消后再续跑。"
+            )
+
+        requested_cycles = max(1, additional_cycles)
+        next_max_cycles = min(max_cycles_cap, bubble.max_cycles + requested_cycles)
+        if next_max_cycles <= bubble.cycles_used:
+            return f"泡泡 {bubble_id} 已达到总轮次上限 {max_cycles_cap}，无法继续续跑。"
+
+        self._history = [item for item in self._history if item is not bubble]
+        self._active[bubble.id] = bubble
+        bubble.status = "running"
+        bubble.error = ""
+        bubble.finished_at = None
+        bubble.max_cycles = next_max_cycles
+        bubble.resume_count += 1
+        bubble.last_resumed_at = now
+        return bubble
 
     def cancel_all(self) -> None:
         for bubble in list(self._active.values()):

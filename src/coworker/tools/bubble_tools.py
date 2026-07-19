@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from coworker.core.types import ToolResult
@@ -99,23 +100,30 @@ class BubbleSpawnTool(Tool):
             name="bubble_spawn",
             description=(
                 "创建一个独立的「思考泡泡」并发执行子任务，有独立的 LLM 实例，可并行运行。\n"
+                "若传入 bubble_id，则不新建泡泡，而是在配置宽限期内从原上下文续跑已超时的泡泡；"
+                "此时 goal 可作为可选的续跑指令，max_cycles 表示额外增加的轮次。\n"
                 "默认继承当前短期记忆快照（forked）；设置 fresh_start=true 则全新开始，"
                 "仅保留 pinned context，适合需要干净上下文的任务。\n"
                 "palaces 可挂上一个或多个「记忆宫殿」，把对应领域的速记卡、关键 skill、相关长期记忆注入泡泡，"
                 "适合专项任务执行（与 fresh_start 正交，专项执行建议 fresh_start=true 取得干净的领域上下文）。\n"
                 "完成后自动将结论合并到主上下文，并推送完成通知。\n"
-                "使用 bubble_check 查看进度，bubble_send 与泡泡通信，bubble_cancel 取消。"
+                "使用 bubble_check 查看进度，bubble_send 与泡泡通信，bubble_cancel 取消；"
+                "超时后以 bubble_spawn(bubble_id=...) 续跑。"
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "goal": {
                         "type": "string",
-                        "description": "泡泡的具体目标，描述越清晰越好",
+                        "description": "新建泡泡的具体目标；未传 bubble_id 时必填。传入 bubble_id 续跑时，作为可选的续跑指令。",
+                    },
+                    "bubble_id": {
+                        "type": "string",
+                        "description": "要续跑的 timeout 泡泡 ID；传入后不新建泡泡，goal 可作为续跑指令。",
                     },
                     "max_cycles": {
                         "type": "integer",
-                        "description": "最大执行轮次（1-50），超出后自动摘要，默认 10",
+                        "description": "新建时的最大执行轮次；续跑时的额外轮次（均为 1-50，累计总轮次不超过 50），默认 10。",
                         "default": 10,
                     },
                     "fresh_start": {
@@ -146,13 +154,14 @@ class BubbleSpawnTool(Tool):
                         "description": "泡泡创建时使用的模型。留空则继承当前主线程 model。",
                     },
                 },
-                "required": ["goal"],
+                "required": [],
             },
         )
 
     async def execute(
         self,
-        goal: str,
+        goal: str = "",
+        bubble_id: str = "",
         max_cycles: int = 10,
         fresh_start: bool = False,
         palaces: list[str] | None = None,
@@ -162,10 +171,20 @@ class BubbleSpawnTool(Tool):
         model: str = "",
         **_,
     ) -> ToolResult:
-        import asyncio
-
-        from coworker.agent.bubble_loop import BubbleMiniLoop
         from coworker.core.token_utils import estimate_content_tokens
+
+        if bubble_id:
+            return await self._resume_existing(
+                bubble_id=bubble_id,
+                additional_cycles=max_cycles,
+                continuation=goal,
+            )
+        if not goal.strip():
+            return ToolResult(
+                tool_call_id="",
+                content="创建泡泡需要 goal；续跑超时泡泡请提供 bubble_id。",
+                is_error=True,
+            )
 
         max_cycles = max(1, min(max_cycles, 50))
         provider, model = _resolve_bubble_model_config(self._parent_brain, provider, model)
@@ -270,27 +289,10 @@ class BubbleSpawnTool(Tool):
             thinking=thinking,
         )
         bubble.brain = bubble_brain
-        system_prompt = self._prompt_builder.build()
-
         forked_tokens = sum(
             estimate_content_tokens(m.content) for m in bubble.forked_context
         )
-
-        mini_loop = BubbleMiniLoop(
-            bubble=bubble,
-            brain=bubble_brain,
-            tool_registry=self._full_registry,
-            system_prompt=system_prompt,
-            bubble_store=self._store,
-            inbox_watcher=self._inbox,
-            logs_dir=self._logs_dir,
-            parent_log=self._parent_log,
-            usage_stats=self._usage_stats,
-            usage_logs_root=self._logs_dir,
-            long_term=self._long_term,
-        )
-        task = asyncio.create_task(mini_loop.run(), name=f"bubble-{bubble.id}")
-        bubble.task = task
+        self.start_existing(bubble)
 
         context_desc = (
             f"全新上下文（仅含 {len(bubble.forked_context)} 条 pinned 消息）"
@@ -315,6 +317,81 @@ class BubbleSpawnTool(Tool):
                 f"bubble_send('{bubble.id}', '消息') 与其通信。"
             ),
         )
+
+    async def _resume_existing(
+        self,
+        bubble_id: str,
+        additional_cycles: int,
+        continuation: str,
+    ) -> ToolResult:
+        """Resume a recently timed-out bubble without losing its forked context."""
+        from coworker.agent.bubble_loop import BubbleMiniLoop
+
+        try:
+            requested_cycles = int(additional_cycles)
+        except (TypeError, ValueError):
+            return ToolResult(
+                tool_call_id="",
+                content="max_cycles 必须是整数。",
+                is_error=True,
+            )
+        requested_cycles = max(1, min(requested_cycles, BubbleMiniLoop._CYCLES_HARD_CAP))
+
+        previous = self._store.get(bubble_id)
+        previous_max_cycles = previous.max_cycles if previous is not None else 0
+        result = self._store.resume(
+            bubble_id,
+            additional_cycles=requested_cycles,
+            max_cycles_cap=BubbleMiniLoop._CYCLES_HARD_CAP,
+        )
+        if isinstance(result, str):
+            return ToolResult(tool_call_id="", content=result, is_error=True)
+        bubble = result
+
+        if continuation.strip():
+            await bubble.inbox.put(("主线", continuation.strip()))
+        try:
+            self.start_existing(bubble)
+        except Exception as e:
+            # A failed startup must not leave a record that appears to be running.
+            bubble.status = "error"
+            bubble.error = f"续跑启动失败：{e}"
+            self._store.mark_done(bubble)
+            return ToolResult(tool_call_id="", content=bubble.error, is_error=True)
+
+        added_cycles = bubble.max_cycles - previous_max_cycles
+        instruction = "已附加主线续跑指令。" if continuation.strip() else ""
+        return ToolResult(
+            tool_call_id="",
+            content=(
+                f"泡泡 {bubble.id} 已恢复并继续执行（第 {bubble.resume_count} 次续跑）。"
+                f"累计轮次预算 {previous_max_cycles} → {bubble.max_cycles}（新增 {added_cycles} 轮）。"
+                f"{instruction}"
+            ),
+        )
+
+    def start_existing(self, bubble: Bubble) -> None:
+        """Start a mini-loop for an already-created (or resumed) bubble."""
+        import asyncio
+
+        from coworker.agent.bubble_loop import BubbleMiniLoop
+
+        if bubble.brain is None:
+            raise RuntimeError(f"泡泡 {bubble.id} 缺少独立 brain，无法启动。")
+        mini_loop = BubbleMiniLoop(
+            bubble=bubble,
+            brain=bubble.brain,
+            tool_registry=self._full_registry,
+            system_prompt=self._prompt_builder.build(),
+            bubble_store=self._store,
+            inbox_watcher=self._inbox,
+            logs_dir=self._logs_dir,
+            parent_log=self._parent_log,
+            usage_stats=self._usage_stats,
+            usage_logs_root=self._logs_dir,
+            long_term=self._long_term,
+        )
+        bubble.task = asyncio.create_task(mini_loop.run(), name=f"bubble-{bubble.id}")
 
     async def _inject_palaces(
         self, bubble: Bubble, resolved_palaces: list[Palace], goal: str
@@ -443,6 +520,21 @@ class BubbleCheckTool(Tool):
             lines.append(f"模型：{bubble.provider}/{bubble.model}")
         if bubble.checkpoint_count > 0:
             lines.append(f"检查点次数：{bubble.checkpoint_count}")
+        if bubble.resume_count > 0:
+            lines.append(f"超时续跑次数：{bubble.resume_count}")
+        if bubble.status == "timeout" and bubble.finished_at is not None:
+            window = self._store.timeout_resume_seconds
+            remaining = window - max(
+                0.0, (datetime.now() - bubble.finished_at).total_seconds()
+            )
+            if window <= 0:
+                lines.append("超时续跑：已禁用")
+            elif remaining > 0:
+                lines.append(
+                    f"超时续跑：剩余约 {remaining:.0f}s，可调用 bubble_spawn(bubble_id=...) 继续。"
+                )
+            else:
+                lines.append("超时续跑：宽限期已过")
         if bubble.partial_results:
             last = bubble.partial_results[-1]
             preview = last[:300] + ("..." if len(last) > 300 else "")
@@ -565,6 +657,8 @@ class BubbleListTool(Tool):
                 tags.append(f"宫殿={','.join(b.palaces)}")
             if b.provider or b.model:
                 tags.append(f"模型={b.provider}/{b.model}")
+            if b.resume_count > 0:
+                tags.append(f"续跑={b.resume_count}")
             tag_str = f" | {' '.join(tags)}" if tags else ""
             lines.append(
                 f"  [{b.id}] {b.status} | {b.cycles_used}/{b.max_cycles}轮 "

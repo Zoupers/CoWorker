@@ -614,8 +614,11 @@ async def _main() -> bool:
 
     bubble_store: BubbleStore | None = None
     if config.agent.bubble_thinking:
-        bubble_store = BubbleStore(max_concurrent=config.agent.bubble_max_concurrent)
-        registry.register(BubbleSpawnTool(
+        bubble_store = BubbleStore(
+            max_concurrent=config.agent.bubble_max_concurrent,
+            timeout_resume_seconds=config.agent.bubble_timeout_resume_seconds,
+        )
+        bubble_spawn = BubbleSpawnTool(
             store=bubble_store,
             short_term=short_term,
             parent_brain=brain,
@@ -628,7 +631,8 @@ async def _main() -> bool:
             palace_loader=palace_loader,
             skill_loader=skill_loader,
             long_term=long_term,
-        ))
+        )
+        registry.register(bubble_spawn)
         registry.register(BubbleCheckTool(bubble_store))
         registry.register(BubbleSendTool(bubble_store, inbox_watcher))
         registry.register(BubbleCancelTool(bubble_store))
@@ -638,7 +642,10 @@ async def _main() -> bool:
     subconscious: SubconsciousScheduler | None = None
     if config.agent.subconscious_thinking:
         if bubble_store is None:
-            bubble_store = BubbleStore(max_concurrent=config.agent.bubble_max_concurrent)
+            bubble_store = BubbleStore(
+                max_concurrent=config.agent.bubble_max_concurrent,
+                timeout_resume_seconds=config.agent.bubble_timeout_resume_seconds,
+            )
         subconscious = SubconsciousScheduler(
             cfg=config,
             bubble_store=bubble_store,

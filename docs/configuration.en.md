@@ -92,6 +92,7 @@ variables, make sure the working directory does not contain conflicting `.env` v
 | `AGENT__MESSAGE_TIME_PREFIX` | `true` | Whether to prefix user messages sent to the model with local time |
 | `AGENT__BUBBLE_THINKING` | `true` | Whether to enable parallel Bubble thinking |
 | `AGENT__BUBBLE_MAX_CONCURRENT` | `5` | Maximum number of concurrent Bubble branches |
+| `AGENT__BUBBLE_TIMEOUT_RESUME_SECONDS` | `300` | Grace period in seconds for continuing a Bubble with `bubble_spawn(bubble_id=...)` after it reaches its cycle limit; set to `0` to disable. |
 | `AGENT__SUBCONSCIOUS_THINKING` | `true` | Whether to enable background subconscious thinking |
 | `AGENT__SUBCONSCIOUS_SUMMARIZE_BEFORE_COMPRESS` | `true` | Whether to trigger subconscious summarization before compression |
 | `AGENT__SUBCONSCIOUS_MAX_CYCLES` | `5` | Maximum cycles for one subconscious task |

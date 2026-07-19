@@ -245,6 +245,8 @@ class AgentConfig(_EnvSettings):
     message_time_prefix: bool = True
     bubble_thinking: bool = True
     bubble_max_concurrent: int = 5
+    # 超时泡泡可在该窗口内通过 bubble_spawn(bubble_id=...) 接着执行；0 表示禁用续跑。
+    bubble_timeout_resume_seconds: int = Field(300, ge=0)
 
     subconscious_thinking: bool = True
     subconscious_summarize_before_compress: bool = True

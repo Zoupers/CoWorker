@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -173,6 +173,56 @@ class TestBubbleStore:
         active = store.list_active()
         assert len(active) == 1
         assert active[0] is b2
+
+    def test_resume_reactivates_recent_timeout_with_extra_cycles(self, store, messages):
+        b = store.create("goal", messages, max_cycles=2)
+        assert isinstance(b, Bubble)
+        b.status = "timeout"
+        b.cycles_used = 2
+        store.mark_done(b)
+
+        resumed = store.resume(
+            b.id,
+            additional_cycles=3,
+            max_cycles_cap=50,
+        )
+
+        assert resumed is b
+        assert b.status == "running"
+        assert b.finished_at is None
+        assert b.max_cycles == 5
+        assert b.resume_count == 1
+        assert store.list_active() == [b]
+        assert b not in store._history
+
+    def test_resume_rejects_expired_timeout(self, messages):
+        store = BubbleStore(timeout_resume_seconds=10)
+        b = store.create("goal", messages, max_cycles=2)
+        assert isinstance(b, Bubble)
+        b.status = "timeout"
+        store.mark_done(b)
+        b.finished_at = datetime.now() - timedelta(seconds=11)
+
+        result = store.resume(b.id, additional_cycles=2, max_cycles_cap=50)
+
+        assert isinstance(result, str)
+        assert "超过可续跑窗口" in result
+        assert b.status == "timeout"
+        assert store.list_active() == []
+
+    def test_resume_respects_concurrent_capacity(self, messages):
+        store = BubbleStore(max_concurrent=1)
+        timed_out = store.create("timed out", messages, max_cycles=2)
+        assert isinstance(timed_out, Bubble)
+        timed_out.status = "timeout"
+        store.mark_done(timed_out)
+        active = store.create("active", messages, max_cycles=2)
+        assert isinstance(active, Bubble)
+
+        result = store.resume(timed_out.id, additional_cycles=2, max_cycles_cap=50)
+
+        assert isinstance(result, str)
+        assert "最大并发泡泡数" in result
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +504,53 @@ class TestBubbleMiniLoop:
         assert b.status == "timeout"
         assert b.cycles_used == 2
         assert "超时摘要" in b.result
+        merged = [call.args[0].content for call in mock_inbox.push.call_args_list]
+        assert any("bubble_spawn" in content and "bubble_id=" in content for content in merged)
+
+    async def test_resume_keeps_transcript_and_continues_cycle_budget(
+        self, store, messages, mock_brain, mock_inbox, mock_registry, tmp_path
+    ):
+        """A resumed bubble starts at its consumed cycle count and sees prior work."""
+        work_tc = ToolCall(id="work", name="some_tool", arguments={})
+        done_tc = ToolCall(id="done", name="bubble_done", arguments={"result": "续跑完成"})
+        responses = [
+            _make_response(tool_calls=[work_tc], stop_reason="tool_use"),
+            _make_response(tool_calls=[work_tc], stop_reason="tool_use"),
+            _make_response(tool_calls=[done_tc], stop_reason="tool_use"),
+        ]
+        captured: list[list] = []
+
+        async def capture_think(messages, system_prompt, tools):
+            captured.append(list(messages))
+            return responses.pop(0)
+
+        mock_brain.think = capture_think
+        mock_brain.summarize = AsyncMock(
+            return_value=json.dumps({"summary": "第一阶段超时摘要", "memories": []})
+        )
+        mock_registry.execute = AsyncMock(
+            return_value=MagicMock(content="第一阶段工具结果", is_error=False)
+        )
+        mock_registry.get_schemas.return_value = [{"name": "some_tool", "description": "", "parameters": {}}]
+
+        b = store.create("goal", messages, max_cycles=2)
+        assert isinstance(b, Bubble)
+        await _make_mini_loop(b, mock_brain, mock_registry, mock_inbox, store, tmp_path).run()
+        assert b.status == "timeout"
+        assert b.cycles_used == 2
+
+        resumed = store.resume(b.id, additional_cycles=2, max_cycles_cap=50)
+        assert resumed is b
+        await _make_mini_loop(b, mock_brain, mock_registry, mock_inbox, store, tmp_path).run()
+
+        assert b.status == "done"
+        assert b.cycles_used == 3
+        assert b.max_cycles == 4
+        assert b.result == "续跑完成"
+        resumed_context = [m.content for m in captured[2] if isinstance(m.content, str)]
+        assert any("第一阶段工具结果" in text for text in resumed_context)
+        assert any("第 1 次续跑" in text for text in resumed_context)
+        assert not any("第一阶段超时摘要" in text for text in resumed_context)
 
     async def test_checkpoint_extends_budget_even_before_last_cycle(
         self, store, messages, mock_brain, mock_inbox, mock_registry, tmp_path
@@ -725,6 +822,74 @@ class TestBubbleSpawnTool:
         await tool.execute(goal="g", max_cycles=999)
         b = store.list_active()[0]
         assert b.max_cycles == 50
+
+    async def test_resume_timeout_with_bubble_id(
+        self, store, messages, mock_short_term, mock_brain, mock_registry, mock_prompt_builder, mock_inbox, tmp_path
+    ):
+        bubble = store.create("继续处理", messages, max_cycles=2)
+        assert isinstance(bubble, Bubble)
+        bubble.status = "timeout"
+        bubble.cycles_used = 2
+        store.mark_done(bubble)
+        tool = self._make_tool(
+            store, mock_short_term, mock_brain, mock_registry, mock_prompt_builder, mock_inbox, tmp_path
+        )
+
+        with patch.object(tool, "start_existing") as start_existing:
+            result = await tool.execute(
+                bubble_id=bubble.id,
+                max_cycles=3,
+                goal="请完成剩余验证。",
+            )
+
+        assert not result.is_error
+        start_existing.assert_called_once_with(bubble)
+        assert bubble.status == "running"
+        assert bubble.max_cycles == 5
+        assert bubble.resume_count == 1
+        sender, message = bubble.inbox.get_nowait()
+        assert sender == "主线"
+        assert message == "请完成剩余验证。"
+
+    async def test_resume_rejects_non_timeout_bubble(
+        self, store, messages, mock_short_term, mock_brain, mock_registry, mock_prompt_builder, mock_inbox, tmp_path
+    ):
+        bubble = store.create("仍在运行", messages, max_cycles=2)
+        assert isinstance(bubble, Bubble)
+        tool = self._make_tool(
+            store, mock_short_term, mock_brain, mock_registry, mock_prompt_builder, mock_inbox, tmp_path
+        )
+
+        result = await tool.execute(bubble_id=bubble.id)
+
+        assert result.is_error
+        assert "只有超时泡泡" in result.content
+
+    async def test_spawn_requires_goal_without_bubble_id(
+        self, store, mock_short_term, mock_brain, mock_registry, mock_prompt_builder, mock_inbox, tmp_path
+    ):
+        tool = self._make_tool(
+            store, mock_short_term, mock_brain, mock_registry, mock_prompt_builder, mock_inbox, tmp_path
+        )
+
+        result = await tool.execute()
+
+        assert result.is_error
+        assert "goal" in result.content
+
+    def test_definition_exposes_resume_as_spawn_mode(
+        self, store, mock_short_term, mock_brain, mock_registry, mock_prompt_builder, mock_inbox, tmp_path
+    ):
+        tool = self._make_tool(
+            store, mock_short_term, mock_brain, mock_registry, mock_prompt_builder, mock_inbox, tmp_path
+        )
+
+        definition = tool.definition
+
+        assert definition.name == "bubble_spawn"
+        assert definition.parameters["required"] == []
+        assert "bubble_id" in definition.parameters["properties"]
+        assert "message" not in definition.parameters["properties"]
 
     async def test_spawn_thinking_default_is_true(
         self, store, mock_short_term, mock_brain, mock_registry, mock_prompt_builder, mock_inbox, tmp_path

@@ -98,6 +98,11 @@ class BubbleMiniLoop:
             fork_plus_identity = len(bubble.forked_context) + 1
             msgs = self._stm.primary if self._stm is not None else []
             bubble.inner_messages = msgs[fork_plus_identity:]
+            if self._stm is not None:
+                # A resumed bubble needs its own pinned state as well as its visible
+                # transcript; pin/unpin changes made inside a bubble are otherwise
+                # lost when its short-term memory is rebuilt.
+                bubble.pinned_items = list(self._stm.pinned_items)
             self._cleanup_scope()
             await self._persist_log()
             self._mark_usage_log_complete()
@@ -149,10 +154,24 @@ class BubbleMiniLoop:
 
         self._stm = ShortTermMemory()
         self._stm.primary = list(bubble.forked_context)
+        self._stm.pinned_items = list(bubble.pinned_items)
         if bubble.forked_tree is not None:
             self._stm.tree.nodes = list(bubble.forked_tree.nodes)
         identity_content = self._build_identity_content(bubble)
         self._stm.primary.append(Message(role="system", content=identity_content))
+        resume_notice = ""
+        if bubble.inner_messages:
+            # Timeout recovery keeps the original fork boundary and inserts a fresh
+            # identity message before the old transcript, so tool-call/result order
+            # remains valid for the provider.
+            self._stm.primary.extend(bubble.inner_messages)
+        if bubble.resume_count:
+            resume_notice = (
+                f"[系统] 泡泡此前达到轮次上限，现已第 {bubble.resume_count} 次续跑。"
+                f"累计轮次预算已扩展至 {max_cycles} 轮，请基于已有上下文继续推进；"
+                "若任务已完成，请调用 bubble_done(result=...) 提交最终结论。"
+            )
+            self._stm.primary.append(Message(role="user", content=resume_notice))
 
         log_path = Path(self._logs_dir) / "bubbles" / self._log_filename(bubble)
         self._log_path = log_path
@@ -186,6 +205,8 @@ class BubbleMiniLoop:
 
             ilog.add_listener(record_usage)
         ilog.log_message_in(participant_id="system", content=identity_content, source="bubble")
+        if resume_notice:
+            ilog.log_message_in(participant_id="system", content=resume_notice, source="bubble")
         if bubble.palace_injection:
             inj = bubble.palace_injection
             ilog.log_palace_injection(
@@ -210,7 +231,9 @@ class BubbleMiniLoop:
         if intercepts:
             scoped_tools = scoped_tools.intercept(intercepts)
 
-        cycle = 0
+        # max_cycles is a cumulative bubble budget.  On a resume, continue from the
+        # cycles that were already consumed instead of restarting the counter.
+        cycle = bubble.cycles_used
         while cycle < max_cycles:
             bubble.cycles_used = cycle + 1
             if bubble.is_terminal():
@@ -437,6 +460,10 @@ class BubbleMiniLoop:
                 "participant_id": bubble.participant_id,
                 "palaces": bubble.palaces,
                 "palace_tags": bubble.palace_tags,
+                "resume_count": bubble.resume_count,
+                "last_resumed_at": (
+                    bubble.last_resumed_at.isoformat() if bubble.last_resumed_at else None
+                ),
             })
         except Exception as e:
             logger.warning(f"Failed to persist bubble log for {bubble.id}: {e}")
@@ -473,6 +500,12 @@ class BubbleMiniLoop:
         bubble = self._bubble
         await self._write_back_to_palaces()
         merge_msg = _build_merge_message(bubble)
+        if bubble.status == "timeout" and self._store.timeout_resume_seconds > 0:
+            merge_msg += (
+                f"\n\n[续跑提示] 若任务仍未完成，可在 {self._store.timeout_resume_seconds}s 内调用 "
+                f"bubble_spawn(bubble_id='{bubble.id}', goal='续跑指令', max_cycles=...) "
+                "保留上下文继续执行。"
+            )
         # Push through inbox instead of direct append so the merge message is
         # inserted at the start of the next main-loop cycle, never mid-tool-execution.
         # 注：不要在这里再 log_message_in——主循环排空 inbox 时会对每条 event 记一次
@@ -499,6 +532,8 @@ def _build_merge_message(bubble: Bubble) -> str:
     ]
     if bubble.checkpoint_count > 0:
         lines.append(f"检查点次数：{bubble.checkpoint_count}")
+    if bubble.resume_count > 0:
+        lines.append(f"超时续跑次数：{bubble.resume_count}")
     lines.append("---")
 
     cycle_summaries: list[str] = []
