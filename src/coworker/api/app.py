@@ -32,17 +32,13 @@ from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
 from coworker.api.admin import router as admin_router
-from coworker.api.routes import (
-    AttachmentSchema,
-    _save_attachment,
-    router,
-    verify_communication_authorization,
-)
+from coworker.api.routes import router, verify_communication_authorization
 from coworker.api.ws import SHUTDOWN_SENTINEL, serialize_outbound_message
+from coworker.channels.inbound import InboundEnvelope
 from coworker.core.config import APIConfig, DesktopUpdatesConfig
 from coworker.core.config_export import build_config_bundle, load_effective_config
 from coworker.core.ids import new_compact_id
-from coworker.core.types import CommunicateRequest, IncomingEvent
+from coworker.core.types import CommunicateRequest
 from coworker.i18n import tr
 from coworker.version import __version__
 
@@ -207,6 +203,8 @@ def setup_ws(
     global _inbox, _communicate
     _inbox = inbox
     _communicate = communicate
+    if _communicate is not None and _inbox is not None:
+        _communicate.set_inbound_handler(_inbox.push)
 
 
 def set_collector(collector: RuntimeEventCollector) -> None:
@@ -757,32 +755,13 @@ async def websocket_endpoint(ws: WebSocket, participant_id: str):
         sender_task = asyncio.create_task(_communicate.stream.run_sender(participant_id, queue, ws))
         while True:
             text = await ws.receive_text()
-            if _inbox:
-                from datetime import datetime
-                content = text
-                conversation_id = None
-                attachments = []
-                try:
-                    parsed = json.loads(text)
-                    if isinstance(parsed, dict) and any(
-                        key in parsed for key in ("message", "conversation_id", "attachments")
-                    ):
-                        content = str(parsed.get("message") or "")
-                        raw_conversation_id = parsed.get("conversation_id")
-                        if isinstance(raw_conversation_id, str) and raw_conversation_id:
-                            conversation_id = raw_conversation_id
-                        for a in parsed.get("attachments", []):
-                            attachments.append(_save_attachment(AttachmentSchema(**a)))
-                except (json.JSONDecodeError, Exception):
-                    pass
-                await _inbox.push(IncomingEvent(
+            await _communicate.receive_raw(
+                InboundEnvelope(
                     participant_id=participant_id,
-                    content=content,
-                    conversation_id=conversation_id,
-                    timestamp=datetime.now(),
                     source="websocket",
-                    attachments=attachments,
-                ))
+                    payload={"text": text},
+                )
+            )
     except WebSocketDisconnect:
         logger.info(f"WS client disconnected: {participant_id}")
     finally:

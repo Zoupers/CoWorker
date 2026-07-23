@@ -26,7 +26,6 @@ from coworker.agent.subconscious_mode import SubconsciousModeLoader
 from coworker.agent.usage_stats import UsageStatsCollector
 from coworker.api import app as api_app
 from coworker.api.admin import setup_admin
-from coworker.api.routes import set_desktop_dispatcher
 from coworker.api.routes import setup as setup_routes
 from coworker.brain.brain import Brain
 from coworker.brain.factory import build_provider
@@ -641,6 +640,7 @@ async def _main() -> bool:
     inbox_watcher = InboxWatcher(config.agent.inbox_dir, config.agent.inbox_poll_interval)
 
     communicate = CommunicateTool(config.agent.outbox_dir)
+    communicate.set_inbound_handler(inbox_watcher.push)
     job_store = BackgroundJobStore()
     browser_store = BrowserSessionStore()
     registry = ToolRegistry()
@@ -849,8 +849,8 @@ async def _main() -> bool:
         config.llm.runtime_config_file,
         config.api.communication_token,
         config.api.development_mode,
+        communication=communicate,
     )
-    set_desktop_dispatcher(desktop_dispatcher)
     setup_admin(
         agent=agent_loop,
         brain=brain,
@@ -869,7 +869,14 @@ async def _main() -> bool:
 
     if not setup_required:
         desktop_sender = DesktopCommunicateSender(communicate)
-        communicate.register_channel(DesktopChannel(desktop_sender, desktop_registry))
+        communicate.register_channel(
+            DesktopChannel(
+                desktop_sender,
+                desktop_registry,
+                desktop_dispatcher,
+                Path(config.agent.inbox_dir).parent / "attachments",
+            )
+        )
 
     wecom_runner: WeComRunner | None = None
     if not setup_required and config.wecom.enabled:
@@ -878,7 +885,6 @@ async def _main() -> bool:
         else:
             wecom_runner = WeComRunner(
                 cfg=config.wecom,
-                inbox=inbox_watcher,
                 attachments_dir=Path(config.agent.inbox_dir).parent / "attachments",
                 contacts_path=Path(config.memory.db_path) / "wecom_contacts.json",
             )

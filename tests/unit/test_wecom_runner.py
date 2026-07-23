@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
+from coworker.channels.wecom.channel import WeComChannel
 from coworker.channels.wecom.runner import WeComRunner
 from coworker.channels.wecom.sender import split_markdown as _split_markdown
 from coworker.core.config import WeComConfig
@@ -24,10 +25,8 @@ def _frame_single() -> dict:
 
 
 def _make_runner(tmp_path) -> WeComRunner:
-    inbox = MagicMock()
-    inbox.push = AsyncMock()
     cfg = WeComConfig(enabled=True, bot_id="BID", secret="SEC")
-    runner = WeComRunner(cfg=cfg, inbox=inbox, attachments_dir=tmp_path)
+    runner = WeComRunner(cfg=cfg, attachments_dir=tmp_path)
     runner._client = AsyncMock()
     return runner
 
@@ -49,13 +48,10 @@ def test_checker_normalizes_legacy_numeric_chat_type(tmp_path):
 def test_load_contacts_normalizes_legacy_numeric_values(tmp_path):
     contacts_path = tmp_path / "wecom_contacts.json"
     contacts_path.write_text('{"U123": 1, "CHATX": 2, "bad": 3}', encoding="utf-8")
-    inbox = MagicMock()
-    inbox.push = AsyncMock()
     cfg = WeComConfig(enabled=True, bot_id="BID", secret="SEC")
 
     runner = WeComRunner(
         cfg=cfg,
-        inbox=inbox,
         attachments_dir=tmp_path,
         contacts_path=contacts_path,
     )
@@ -95,6 +91,35 @@ async def test_send_uses_reply_stream_when_frame_cached(tmp_path):
 
     runner._client.reply_stream.assert_awaited_once()
     runner._client.send_message.assert_not_called()
+    sent_at, received_at = runner.activity_for("wecom:single:U123")
+    assert sent_at is not None
+    assert received_at is not None
+
+
+@pytest.mark.asyncio
+async def test_inbound_frame_is_published_through_channel_handler(tmp_path):
+    runner = _make_runner(tmp_path)
+    handler = AsyncMock()
+    runner.set_inbound_handler(handler)
+
+    await runner._on_text_like(_frame_single())
+
+    handler.assert_awaited_once()
+    event = handler.await_args.args[0]
+    assert event.participant_id == "wecom:single:U123"
+    assert event.content == "ping"
+
+
+def test_channel_lists_latest_activity_times(tmp_path):
+    runner = _make_runner(tmp_path)
+    runner._contacts["U123"] = "single"
+    runner._cache_frame("wecom:single:U123", _frame_single())
+
+    info = WeComChannel(runner).list_connections()[0]
+
+    assert info.active is True
+    assert info.last_sent_at is None
+    assert info.last_received_at is not None
 
 
 @pytest.mark.asyncio
@@ -227,6 +252,7 @@ async def test_sender_catches_errors(tmp_path):
     )
     assert result.is_error is True
     assert "boom" in result.content
+    assert runner.activity_for("wecom:single:U777")[0] is None
 
 
 @pytest.mark.asyncio

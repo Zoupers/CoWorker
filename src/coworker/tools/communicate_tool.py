@@ -5,9 +5,20 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from coworker.channels.base import Channel, ChannelHost, ParticipantIdResolutionError
+from coworker.channels.base import (
+    Channel,
+    ChannelHost,
+    InboundHandler,
+    ParticipantIdResolutionError,
+)
+from coworker.channels.inbound import InboundEnvelope
 from coworker.channels.stream import StreamChannel
-from coworker.core.types import CommunicateRegistration, CommunicateRequest, ToolResult
+from coworker.core.types import (
+    CommunicateRegistration,
+    CommunicateRequest,
+    IncomingEvent,
+    ToolResult,
+)
 from coworker.i18n import tr
 from coworker.tools.base import Tool, ToolDefinition
 
@@ -200,6 +211,22 @@ class CommunicateTool(Tool):
         """Aggregate reachable participants across all channels (for list_connections tool)."""
         return self._host.list_connections()
 
+    def record_received(self, participant_id: str) -> None:
+        """Record an inbound message for the participant's selected channel."""
+        self._host.record_received(participant_id)
+
+    def set_inbound_handler(self, handler: InboundHandler | None) -> None:
+        """Attach the inbox owner to all registered communication channels."""
+        self._host.set_inbound_handler(handler)
+
+    async def publish_inbound(self, event: IncomingEvent) -> None:
+        """Publish a normalized inbound event through the channel host."""
+        await self._host.publish_inbound(event)
+
+    async def receive_raw(self, envelope: InboundEnvelope) -> None:
+        """Route raw protocol input to the owning channel for normalization."""
+        await self._host.receive_raw(envelope)
+
     def shutdown(self) -> None:
         """Wake all live WS/SSE queues so blocked senders can exit on shutdown."""
         self._stream.shutdown()
@@ -360,7 +387,19 @@ class ListConnectionTool(Tool):
         for channel in sorted(by_channel):
             lines.append(f"{channel}:")
             for info in sorted(by_channel[channel], key=lambda i: i.participant_id):
-                state = "active" if info.active else "offline"
-                label = f" ({info.display_name})" if info.display_name else ""
-                lines.append(f"  - {info.participant_id} [{info.kind}, {state}]{label}")
+                activity = tr(
+                    "tool_result.communicate.connection_activity",
+                    sent=info.last_sent_at or tr("tool_result.communicate.connection_none"),
+                    received=info.last_received_at
+                    or tr("tool_result.communicate.connection_none"),
+                )
+                display_name = f" ({info.display_name})" if info.display_name else ""
+                lines.append(
+                    tr(
+                        "tool_result.communicate.connection_line",
+                        participant=info.participant_id,
+                        activity=activity,
+                        display_name=display_name,
+                    )
+                )
         return ToolResult(tool_call_id="", content="\n".join(lines))

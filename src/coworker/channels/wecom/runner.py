@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from coworker.channels.base import InboundHandler
 from coworker.channels.wecom import adapter
 from coworker.channels.wecom.contacts import ContactsStore, normalize_chat_type
 from coworker.channels.wecom.sender import WeComSender
-from coworker.core.types import ToolResult
+from coworker.core.types import IncomingEvent, ToolResult
 from coworker.i18n import tr
 
 
@@ -44,7 +46,6 @@ class _LoguruLogger:
 
 
 if TYPE_CHECKING:
-    from coworker.agent.inbox_watcher import InboxWatcher
     from coworker.core.config import WeComConfig
     from coworker.core.types import CommunicateRequest
 
@@ -56,27 +57,32 @@ class WeComRunner:
 
     Outbound delivery is delegated to :class:`WeComSender`; contact persistence
     to :class:`ContactsStore`. This class owns the WS client, the inbound frame
-    cache, and the CommunicateTool-facing ``checker``/``sender`` adapters.
+    cache, and the channel-facing ``checker``/``sender`` adapters. Normalized
+    inbound events are emitted through the handler installed by ``WeComChannel``.
     """
 
     def __init__(
         self,
         cfg: WeComConfig,
-        inbox: InboxWatcher,
         attachments_dir: Path,
         contacts_path: Path | None = None,
     ) -> None:
         self._cfg = cfg
-        self._inbox = inbox
         self._attachments_dir = attachments_dir
         self._contacts_path = contacts_path
         self._client: Any = None  # WSClient, lazy-imported
         self._frame_cache: dict[str, tuple[dict[str, Any], float]] = {}
+        self._last_sent_at: dict[str, str] = {}
+        self._last_received_at: dict[str, str] = {}
         # Persistent chat_id -> chat_type ("single"/"group") mapping.
         self._contacts: dict[str, str] = ContactsStore.load(self._contacts_path)
         self._sender = WeComSender(lambda: self._client, self._take_fresh_frame)
         self._stop = asyncio.Event()
         self._kicked = False
+        self._inbound_handler: InboundHandler | None = None
+
+    def set_inbound_handler(self, handler: InboundHandler | None) -> None:
+        self._inbound_handler = handler
 
     async def start(self) -> None:
         from wecom_aibot_sdk import WSClient
@@ -130,7 +136,7 @@ class WeComRunner:
         try:
             event = adapter.frame_to_event(frame, attachments=[])
             self._cache_frame(adapter.participant_id_for(frame), frame)
-            await self._inbox.push(event)
+            await self._publish_inbound(event)
         except Exception as e:
             logger.error(f"WeCom text handler error: {e}")
 
@@ -139,13 +145,19 @@ class WeComRunner:
             atts = await adapter.collect_attachments(self._client, frame, self._attachments_dir)
             event = adapter.frame_to_event(frame, attachments=atts)
             self._cache_frame(adapter.participant_id_for(frame), frame)
-            await self._inbox.push(event)
+            await self._publish_inbound(event)
         except Exception as e:
             logger.error(f"WeCom attachment handler error: {e}")
 
     async def _on_stream_notify(self, frame: dict[str, Any]) -> None:
         stream_id = frame.get("body", {}).get("stream", {}).get("id", "?")
         logger.debug(f"WeCom stream notify id={stream_id}")
+
+    async def _publish_inbound(self, event: IncomingEvent) -> None:
+        if self._inbound_handler is None:
+            logger.warning("Dropping WeCom inbound event: no channel host handler is configured")
+            return
+        await self._inbound_handler(event)
 
     async def _on_kicked(self, frame: dict[str, Any]) -> None:
         logger.warning("WeCom kicked by a newer connection; will not auto-reconnect")
@@ -158,6 +170,7 @@ class WeComRunner:
         # Cache keyed by participant_id so send() can look up by chat_id later.
         chat_type, chat_id = adapter.parse_participant(participant_id)
         self._frame_cache[chat_id] = (frame, time.monotonic() + _FRAME_TTL)
+        self._last_received_at[chat_id] = datetime.now().astimezone().isoformat(timespec="seconds")
         if self._contacts.get(chat_id) != chat_type:
             self._contacts[chat_id] = chat_type
             ContactsStore.save(self._contacts_path, self._contacts)
@@ -186,6 +199,13 @@ class WeComRunner:
         attachments: list[dict[str, Any]],
     ) -> None:
         await self._sender.send(participant_id, message, attachments)
+        _, chat_id = adapter.parse_participant(participant_id)
+        self._last_sent_at[chat_id] = datetime.now().astimezone().isoformat(timespec="seconds")
+
+    def activity_for(self, participant_id: str) -> tuple[str | None, str | None]:
+        """Return the latest successful outbound and inbound times for a chat."""
+        _, chat_id = adapter.parse_participant(participant_id)
+        return self._last_sent_at.get(chat_id), self._last_received_at.get(chat_id)
 
     # ── adapter for CommunicateTool ──────────────────────────────────────
 
