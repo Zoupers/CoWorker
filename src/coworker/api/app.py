@@ -54,7 +54,6 @@ from coworker.version import __version__
 
 if TYPE_CHECKING:
     from coworker.agent.event_collector import RuntimeEventCollector
-    from coworker.channels.registry import ChannelRegistry
     from coworker.channels.stream import StreamRuntime
     from coworker.channels.system import ChannelSystem
 
@@ -105,8 +104,7 @@ async def redirect_to_setup(request: Request, call_next):
     return response
 
 
-_channels: ChannelRegistry | None = None
-_stream: StreamRuntime | None = None
+_channel_system: ChannelSystem | None = None
 _collector: RuntimeEventCollector | None = None
 _desktop_updates_effective: DesktopUpdatesConfig | None = None
 _desktop_updates_admin_token = ""
@@ -149,8 +147,8 @@ def signal_shutdown() -> None:
     global _shutting_down
     _shutting_down = True
     # Wake live WS/SSE outbox queues via the single stream registry.
-    if _stream is not None:
-        _stream.shutdown()
+    if _channel_system is not None:
+        _channel_system.stream_runtime.shutdown()
     if _collector is not None:
         for q in list(_collector.subscribers()):  # /logs/stream SSE 订阅者
             try:
@@ -200,9 +198,8 @@ def _rejected_sse_response(participant_id: str) -> StreamingResponse:
 def setup_channels(
     channel_system: ChannelSystem | None,
 ) -> None:
-    global _channels, _stream
-    _channels = channel_system.registry if channel_system is not None else None
-    _stream = channel_system.stream_runtime if channel_system is not None else None
+    global _channel_system
+    _channel_system = channel_system
 
 
 def set_collector(collector: RuntimeEventCollector) -> None:
@@ -224,11 +221,11 @@ def setup_desktop_updates(
 
 
 def _require_stream() -> StreamRuntime:
-    if _stream is None:
+    if _channel_system is None:
         raise HTTPException(
             status_code=503, detail=tr("api.state.channel_runtime_not_ready")
         )
-    return _stream
+    return _channel_system.stream_runtime
 
 
 def _desktop_updates_config() -> DesktopUpdatesConfig:
@@ -266,11 +263,12 @@ def _is_newer(candidate: str, current: str) -> bool:
 
 
 def _enqueue_desktop_update_checks(version: str) -> dict[str, int]:
-    if _stream is None:
+    if _channel_system is None:
         return {"eligible": 0, "enqueued": 0}
 
+    stream = _channel_system.stream_runtime
     desktops: dict[str, tuple[str, asyncio.Queue]] = {}
-    for registration in _stream.registration_records():
+    for registration in stream.registration_records():
         metadata = registration.metadata
         capabilities = metadata.get("capabilities")
         if (
@@ -279,7 +277,7 @@ def _enqueue_desktop_update_checks(version: str) -> dict[str, int]:
             or "desktop_update_push" not in capabilities
         ):
             continue
-        queue = _stream.outbound_queue(registration.participant_id)
+        queue = stream.outbound_queue(registration.participant_id)
         desktop_id = str(metadata.get("desktop_id") or "").strip()
         current_version = str(metadata.get("desktop_version") or "").strip()
         if not desktop_id or (current_version and not _is_newer(version, current_version)):
@@ -756,30 +754,32 @@ async def websocket_endpoint(ws: WebSocket, participant_id: str):
         except HTTPException as error:
             await ws.close(code=1008, reason=str(error.detail))
             return
-    if _channels is None or _stream is None:
+    if _channel_system is None:
         await ws.close(code=1013, reason=tr("api.state.agent_not_ready"))
         return
+    channels = _channel_system.registry
+    stream = _channel_system.stream_runtime
     queue: asyncio.Queue = asyncio.Queue()
     sender_task: asyncio.Task | None = None
 
-    if not _stream.register_ws(participant_id, queue, transport="websocket"):
+    if not stream.register_ws(participant_id, queue, transport="websocket"):
         logger.info(f"WS rejected duplicate participant_id: {participant_id}")
         await _reject_websocket(ws, participant_id)
         return
 
     try:
         try:
-            queue = await _stream.connect(participant_id, ws, queue)
+            queue = await stream.connect(participant_id, ws, queue)
         except ValueError:
-            _stream.unregister_ws(participant_id, queue)
+            stream.unregister_ws(participant_id, queue)
             logger.info(f"WS rejected duplicate participant_id: {participant_id}")
             await _reject_websocket(ws, participant_id)
             return
 
-        sender_task = asyncio.create_task(_stream.run_sender(participant_id, queue, ws))
+        sender_task = asyncio.create_task(stream.run_sender(participant_id, queue, ws))
         while True:
             text = await ws.receive_text()
-            await _channels.receive_raw(
+            await channels.receive_raw(
                 InboundEnvelope(
                     participant_id=participant_id,
                     source="websocket",
@@ -789,8 +789,8 @@ async def websocket_endpoint(ws: WebSocket, participant_id: str):
     except WebSocketDisconnect:
         logger.info(f"WS client disconnected: {participant_id}")
     finally:
-        _stream.disconnect(participant_id, ws=ws, queue=queue)
-        _stream.unregister_ws(participant_id, queue)
+        stream.disconnect(participant_id, ws=ws, queue=queue)
+        stream.unregister_ws(participant_id, queue)
         if sender_task is not None:
             sender_task.cancel()
 
@@ -808,9 +808,10 @@ async def sse_endpoint(
     if participant_id.startswith("coworker-desktop:"):
         verify_communication_authorization(authorization)
     queue: asyncio.Queue = asyncio.Queue()
+    stream = _channel_system.stream_runtime if _channel_system is not None else None
     registered = False
-    if _stream:
-        registered = _stream.register_ws(
+    if stream is not None:
+        registered = stream.register_ws(
             participant_id,
             queue,
             transport="sse",
@@ -837,8 +838,8 @@ async def sse_endpoint(
                     break
                 yield _format_sse(msg)
         finally:
-            if registered and _stream:
-                _stream.unregister_ws(participant_id, queue)
+            if registered and stream is not None:
+                stream.unregister_ws(participant_id, queue)
             logger.info(f"SSE disconnected: {participant_id}")
 
     return StreamingResponse(

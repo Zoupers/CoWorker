@@ -63,8 +63,7 @@ def client(tmp_path):
     routes_mod._seen_desktop_message_ids.clear()
     api_app._desktop_updates_effective = None
     api_app._desktop_updates_admin_token = ""
-    api_app._channels = None
-    api_app._stream = None
+    api_app._channel_system = None
     api_app._collector = None
     api_app._shutting_down = False
     api_app.set_setup_required(False)
