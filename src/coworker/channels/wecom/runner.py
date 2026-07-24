@@ -71,7 +71,7 @@ class WeComRunner:
         self._attachments_dir = attachments_dir
         self._contacts_path = contacts_path
         self._client: Any = None  # WSClient, lazy-imported
-        self._frame_cache: dict[str, tuple[dict[str, Any], float]] = {}
+        self._frame_cache: dict[tuple[str, str], tuple[dict[str, Any], float]] = {}
         self._last_sent_at: dict[str, str] = {}
         self._last_received_at: dict[str, str] = {}
         # Persistent chat_id -> chat_type ("single"/"group") mapping.
@@ -135,7 +135,7 @@ class WeComRunner:
     async def _on_text_like(self, frame: dict[str, Any]) -> None:
         try:
             event = adapter.frame_to_event(frame, attachments=[])
-            self._cache_frame(adapter.participant_id_for(frame), frame)
+            self._cache_frame(event.participant_id, event.conversation_id, frame)
             await self._publish_inbound(event)
         except Exception as e:
             logger.error(f"WeCom text handler error: {e}")
@@ -144,7 +144,7 @@ class WeComRunner:
         try:
             atts = await adapter.collect_attachments(self._client, frame, self._attachments_dir)
             event = adapter.frame_to_event(frame, attachments=atts)
-            self._cache_frame(adapter.participant_id_for(frame), frame)
+            self._cache_frame(event.participant_id, event.conversation_id, frame)
             await self._publish_inbound(event)
         except Exception as e:
             logger.error(f"WeCom attachment handler error: {e}")
@@ -155,7 +155,7 @@ class WeComRunner:
 
     async def _publish_inbound(self, event: IncomingEvent) -> None:
         if self._inbound_handler is None:
-            logger.warning("Dropping WeCom inbound event: no channel host handler is configured")
+            logger.warning("Dropping WeCom inbound event: no channel handler is configured")
             return
         await self._inbound_handler(event)
 
@@ -166,17 +166,37 @@ class WeComRunner:
 
     # ── frame cache ──────────────────────────────────────────────────────
 
-    def _cache_frame(self, participant_id: str, frame: dict[str, Any]) -> None:
-        # Cache keyed by participant_id so send() can look up by chat_id later.
+    def _cache_frame(
+        self,
+        participant_id: str,
+        conversation_id: str | None,
+        frame: dict[str, Any],
+    ) -> None:
         chat_type, chat_id = adapter.parse_participant(participant_id)
-        self._frame_cache[chat_id] = (frame, time.monotonic() + _FRAME_TTL)
+        self._frame_cache[(chat_id, conversation_id or "")] = (
+            frame,
+            time.monotonic() + _FRAME_TTL,
+        )
         self._last_received_at[chat_id] = datetime.now().astimezone().isoformat(timespec="seconds")
         if self._contacts.get(chat_id) != chat_type:
             self._contacts[chat_id] = chat_type
             ContactsStore.save(self._contacts_path, self._contacts)
 
-    def _take_fresh_frame(self, chat_id: str) -> dict[str, Any] | None:
-        item = self._frame_cache.pop(chat_id, None)
+    def _take_fresh_frame(
+        self,
+        chat_id: str,
+        conversation_id: str | None,
+    ) -> dict[str, Any] | None:
+        if conversation_id:
+            item = self._frame_cache.pop((chat_id, conversation_id), None)
+        else:
+            matching_keys = [key for key in self._frame_cache if key[0] == chat_id]
+            latest_key = max(
+                matching_keys,
+                key=lambda key: self._frame_cache[key][1],
+                default=None,
+            )
+            item = self._frame_cache.pop(latest_key, None) if latest_key else None
         if item is None:
             return None
         frame, expires = item
@@ -186,9 +206,11 @@ class WeComRunner:
 
     def _sweep_frames(self) -> None:
         now = time.monotonic()
-        expired = [k for k, (_, exp) in self._frame_cache.items() if exp <= now]
-        for k in expired:
-            self._frame_cache.pop(k, None)
+        expired = [
+            key for key, (_, expires) in self._frame_cache.items() if expires <= now
+        ]
+        for key in expired:
+            self._frame_cache.pop(key, None)
 
     # ── outbound ─────────────────────────────────────────────────────────
 
@@ -197,8 +219,14 @@ class WeComRunner:
         participant_id: str,
         message: str,
         attachments: list[dict[str, Any]],
+        conversation_id: str | None = None,
     ) -> None:
-        await self._sender.send(participant_id, message, attachments)
+        await self._sender.send(
+            participant_id,
+            message,
+            attachments,
+            conversation_id,
+        )
         _, chat_id = adapter.parse_participant(participant_id)
         self._last_sent_at[chat_id] = datetime.now().astimezone().isoformat(timespec="seconds")
 

@@ -30,7 +30,7 @@ class WeComChannel(BaseChannel):
     def __init__(self, runner: WeComRunner) -> None:
         super().__init__(
             runtime=runner,
-            capabilities=ChannelCapabilities(attachments=True),
+            capabilities=ChannelCapabilities(conversation_id=True, attachments=True),
         )
         self.name = "wecom"
         self.participant_prefix = "wecom:"
@@ -45,6 +45,7 @@ class WeComChannel(BaseChannel):
                 request.participant_id,
                 request.message,
                 request.attachments,
+                request.conversation_id,
             )
             return ToolResult(
                 tool_call_id="",
@@ -68,8 +69,10 @@ class WeComChannel(BaseChannel):
         now = time.monotonic()
         out: list[ConnectionInfo] = []
         for chat_id, chat_type in self._runner._contacts.items():
-            item = self._runner._frame_cache.get(chat_id)
-            active = item is not None and now < item[1]
+            active = any(
+                cached_chat_id == chat_id and now < expires
+                for (cached_chat_id, _), (_, expires) in self._runner._frame_cache.items()
+            )
             participant_id = f"wecom:{chat_type}:{chat_id}"
             last_sent_at, last_received_at = self._runner.activity_for(participant_id)
             out.append(

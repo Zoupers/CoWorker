@@ -12,11 +12,11 @@ from coworker.core.config import WeComConfig
 from coworker.core.types import CommunicateRequest
 
 
-def _frame_single() -> dict:
+def _frame_single(request_id: str = "r1", message_id: str = "M1") -> dict:
     return {
-        "headers": {"req_id": "r1"},
+        "headers": {"req_id": request_id},
         "body": {
-            "msgid": "M1",
+            "msgid": message_id,
             "chattype": "single",
             "from": {"userid": "U123"},
             "msgtype": "text",
@@ -86,7 +86,7 @@ def test_split_markdown_hard_split_oversize_paragraph():
 @pytest.mark.asyncio
 async def test_send_uses_reply_stream_when_frame_cached(tmp_path):
     runner = _make_runner(tmp_path)
-    runner._cache_frame("wecom:single:U123", _frame_single())
+    runner._cache_frame("wecom:single:U123", "r1", _frame_single())
 
     await runner.send("wecom:single:U123", "你好", [])
 
@@ -108,13 +108,14 @@ async def test_inbound_frame_is_published_through_channel_handler(tmp_path):
     handler.assert_awaited_once()
     event = handler.await_args.args[0]
     assert event.participant_id == "wecom:single:U123"
+    assert event.conversation_id == "r1"
     assert event.content == "ping"
 
 
 def test_channel_lists_latest_activity_times(tmp_path):
     runner = _make_runner(tmp_path)
     runner._contacts["U123"] = "single"
-    runner._cache_frame("wecom:single:U123", _frame_single())
+    runner._cache_frame("wecom:single:U123", "r1", _frame_single())
 
     info = WeComChannel(runner).list_connections()[0]
 
@@ -151,7 +152,7 @@ async def test_send_chunks_long_markdown(tmp_path):
 @pytest.mark.asyncio
 async def test_send_with_attachment_uses_reply_media_when_frame(tmp_path):
     runner = _make_runner(tmp_path)
-    runner._cache_frame("wecom:single:U123", _frame_single())
+    runner._cache_frame("wecom:single:U123", "r1", _frame_single())
 
     runner._client.upload_media = AsyncMock(return_value={"media_id": "MID-1"})
 
@@ -170,7 +171,7 @@ async def test_send_with_attachment_uses_reply_media_when_frame(tmp_path):
 async def test_send_attachment_after_text_uses_send_media_message(tmp_path):
     """frame 被首条 text 消耗后，attachment 走主动推送。"""
     runner = _make_runner(tmp_path)
-    runner._cache_frame("wecom:single:U123", _frame_single())
+    runner._cache_frame("wecom:single:U123", "r1", _frame_single())
     runner._client.upload_media = AsyncMock(return_value={"media_id": "MID-2"})
 
     f = tmp_path / "doc.pdf"
@@ -217,21 +218,47 @@ def test_validate_attachment_rejects_unknown_type(tmp_path):
 
 def test_take_fresh_frame_returns_none_after_expiry(tmp_path, monkeypatch):
     runner = _make_runner(tmp_path)
-    runner._cache_frame("wecom:single:U1", _frame_single())
+    runner._cache_frame("wecom:single:U1", "r1", _frame_single())
     # Advance monotonic past TTL
     import coworker.channels.wecom.runner as runner_mod
-    base = runner._frame_cache["U1"][1]
+    base = runner._frame_cache[("U1", "r1")][1]
     monkeypatch.setattr(runner_mod.time, "monotonic", lambda: base + 1)
-    assert runner._take_fresh_frame("U1") is None
+    assert runner._take_fresh_frame("U1", "r1") is None
 
 
 def test_take_fresh_frame_pops_value(tmp_path):
     runner = _make_runner(tmp_path)
-    runner._cache_frame("wecom:single:U1", _frame_single())
-    f = runner._take_fresh_frame("U1")
+    runner._cache_frame("wecom:single:U1", "r1", _frame_single())
+    f = runner._take_fresh_frame("U1", "r1")
     assert f is not None
     # second call returns None (popped)
-    assert runner._take_fresh_frame("U1") is None
+    assert runner._take_fresh_frame("U1", "r1") is None
+
+
+@pytest.mark.asyncio
+async def test_send_uses_frame_matching_conversation_id(tmp_path):
+    runner = _make_runner(tmp_path)
+    first = _frame_single("r1", "M1")
+    second = _frame_single("r2", "M2")
+    runner._cache_frame("wecom:single:U123", "r1", first)
+    runner._cache_frame("wecom:single:U123", "r2", second)
+
+    await runner.send("wecom:single:U123", "reply first", [], "r1")
+
+    assert runner._client.reply_stream.await_args.args[0] is first
+    assert ("U123", "r2") in runner._frame_cache
+
+
+@pytest.mark.asyncio
+async def test_missing_conversation_frame_never_replies_to_another_frame(tmp_path):
+    runner = _make_runner(tmp_path)
+    runner._cache_frame("wecom:single:U123", "r2", _frame_single("r2", "M2"))
+
+    await runner.send("wecom:single:U123", "late reply", [], "r1")
+
+    runner._client.reply_stream.assert_not_called()
+    runner._client.send_message.assert_awaited_once()
+    assert ("U123", "r2") in runner._frame_cache
 
 
 @pytest.mark.asyncio
@@ -274,6 +301,6 @@ async def test_channel_delivers_message_and_reports_unsupported_fields(tmp_path)
     )
 
     assert not result.is_error
-    assert "不支持 conversation_id, extra" in result.content
-    assert "仅将 message 传给了信道" in result.content
+    assert "不支持 extra" in result.content
+    assert "不支持 conversation_id" not in result.content
     runner._client.send_message.assert_awaited_once()

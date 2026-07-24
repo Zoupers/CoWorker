@@ -1,9 +1,4 @@
-"""WeCom outbound sending: message chunking, media upload, and delivery.
-
-Extracted from ``WeComRunner``. :class:`WeComSender` holds the media cache
-and takes a client getter + a fresh-frame lookup (both owned by the runner)
-so it can reply via a cached inbound frame or fall back to an active push.
-"""
+"""WeCom outbound message chunking, media upload, and delivery."""
 
 from __future__ import annotations
 
@@ -57,7 +52,7 @@ class WeComSender:
     def __init__(
         self,
         client_getter: Callable[[], Any],
-        take_frame: Callable[[str], dict[str, Any] | None],
+        take_frame: Callable[[str, str | None], dict[str, Any] | None],
     ) -> None:
         self._get_client = client_getter
         self._take_frame = take_frame
@@ -68,12 +63,13 @@ class WeComSender:
         participant_id: str,
         message: str,
         attachments: list[dict[str, Any]],
+        conversation_id: str | None = None,
     ) -> None:
         client = self._get_client()
         if client is None:
             raise RuntimeError("WeCom client not started")
         _chat_type, chat_id = adapter.parse_participant(participant_id)
-        frame = self._take_frame(chat_id)
+        frame = self._take_frame(chat_id, conversation_id)
 
         if message:
             from wecom_aibot_sdk import generate_req_id
