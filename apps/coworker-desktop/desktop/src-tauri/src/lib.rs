@@ -144,6 +144,9 @@ async fn save_config(
     write_config_value(&path, &config).map_err(to_message)?;
     let desktop_config = DesktopConfig::from_file(&path).map_err(to_message)?;
     state
+        .close_to_tray
+        .store(close_to_tray_from_config(&config), Ordering::SeqCst);
+    state
         .runtime
         .apply_saved_config(&path, &desktop_config)
         .await
@@ -862,6 +865,13 @@ pub fn run() {
                 env!("CARGO_PKG_VERSION"),
                 log_file_path(&logs_dir).display()
             ));
+            let close_to_tray = configured_close_to_tray(app.handle());
+            app.state::<AppState>()
+                .close_to_tray
+                .store(close_to_tray, Ordering::SeqCst);
+            desktop_log_info(format!(
+                "CoWorker Desktop loaded close_to_tray={close_to_tray}"
+            ));
             install_tray(app)?;
             install_window_close_behavior(app)?;
             install_actor_stream_event_relay(app.handle().clone());
@@ -1193,6 +1203,22 @@ fn config_path(app: &tauri::AppHandle, path: Option<String>) -> Result<PathBuf, 
             Ok(current_path)
         }
     }
+}
+
+fn close_to_tray_from_config(config: &Value) -> bool {
+    config
+        .get("close_to_tray")
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+}
+
+fn configured_close_to_tray(app: &tauri::AppHandle) -> bool {
+    config_path(app, None)
+        .ok()
+        .and_then(|path| read_config_value(&path).ok())
+        .as_ref()
+        .map(close_to_tray_from_config)
+        .unwrap_or(true)
 }
 
 const PREVIOUS_APP_IDENTIFIERS: [&str; 2] =
@@ -1823,5 +1849,16 @@ mod tests {
     #[test]
     fn first_output_line_returns_none_when_output_is_blank() {
         assert_eq!(first_output_line(b"\n", b"\n"), None);
+    }
+
+    #[test]
+    fn close_to_tray_defaults_to_enabled_and_respects_saved_boolean() {
+        assert!(close_to_tray_from_config(&serde_json::json!({})));
+        assert!(close_to_tray_from_config(
+            &serde_json::json!({"close_to_tray": true})
+        ));
+        assert!(!close_to_tray_from_config(
+            &serde_json::json!({"close_to_tray": false})
+        ));
     }
 }

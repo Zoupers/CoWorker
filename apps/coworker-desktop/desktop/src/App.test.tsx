@@ -289,14 +289,25 @@ describe("App backend operation wiring", () => {
     expect(tabs.map((tab) => tab.textContent)).toEqual(["Partner Two", "Partner One"]);
   });
 
-  it("sends a native notification for an incoming local message", async () => {
+  it("only sends native message notifications while the window is in the background", async () => {
+    const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
     await renderApp(runningStatus);
     vi.mocked(sendNotification).mockClear();
 
     act(() => actorStreamHandlers.forEach((handler) => handler({
       actor_id: "local",
       conversation_id: "local-thread",
-      message_id: "incoming-local-1",
+      message_id: "incoming-local-foreground",
+      event: { type: "conversation_updated" },
+    })));
+    expect(sendNotification).not.toHaveBeenCalled();
+    expect(await screen.findByText("New Local message")).toBeInTheDocument();
+
+    hasFocus.mockReturnValue(false);
+    act(() => actorStreamHandlers.forEach((handler) => handler({
+      actor_id: "local",
+      conversation_id: "local-thread",
+      message_id: "incoming-local-background",
       event: { type: "conversation_updated" },
     })));
 
@@ -304,6 +315,7 @@ describe("App backend operation wiring", () => {
       title: "New Local message",
       body: "Open CoWorker Desktop to view the conversation.",
     }));
+    hasFocus.mockRestore();
   });
 
   it("refreshes approvals from lifecycle events without polling", async () => {
@@ -785,6 +797,10 @@ describe("App backend operation wiring", () => {
 
     await user.click(screen.getByRole("button", { name: "Quote message" }));
     expect(screen.getByLabelText("Session message")).toHaveValue("> Ready\n\n");
+
+    writeText.mockRejectedValueOnce(new Error("clipboard permission denied"));
+    await user.click(screen.getByRole("button", { name: "Copy message" }));
+    expect(await screen.findByText("Couldn't copy the message. Check the system clipboard permission and try again.")).toBeInTheDocument();
   });
 
   it("localizes empty Codex responses in the conversation", async () => {

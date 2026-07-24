@@ -93,6 +93,7 @@ export function SessionsView({
   modeOptions,
   draftProjectPath,
   onChooseDraftProject,
+  onCopyMessageError,
 }: {
   sessions: ActorConversation[];
   sessionsLoading: boolean;
@@ -143,6 +144,7 @@ export function SessionsView({
   modeOptions?: SessionModeOption[];
   draftProjectPath?: string;
   onChooseDraftProject?: () => void;
+  onCopyMessageError: () => void;
 }) {
   const { t } = useI18n();
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -186,6 +188,7 @@ export function SessionsView({
       window.setTimeout(() => setCopiedMessageId((current) => current === messageId ? "" : current), 1600);
     } catch {
       setCopiedMessageId("");
+      onCopyMessageError();
     }
   }
 

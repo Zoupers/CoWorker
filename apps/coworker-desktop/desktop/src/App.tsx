@@ -125,6 +125,12 @@ export function shouldNotifyActorEvent(
   return true;
 }
 
+export function shouldSendNativeNotification(
+  page: Pick<Document, "hasFocus" | "visibilityState"> = document,
+): boolean {
+  return page.visibilityState !== "visible" || !page.hasFocus();
+}
+
 export function App() {
   const { t, lang, setLang } = useI18n();
   const [view, setView] = useState<View>("status");
@@ -551,6 +557,10 @@ export function App() {
     let unlisten: (() => void) | undefined;
     listenActorStreamEvents((update) => {
       if (!shouldNotifyActorEvent(update, notifiedMessageIdsRef.current)) return;
+      if (!shouldSendNativeNotification()) {
+        showToast(t("messages.notification.title", { actor: actorDisplayName(update.actor_id) }), "info");
+        return;
+      }
       notifyIncomingMessage(update.actor_id).catch(() => undefined);
     })
       .then((nextUnlisten) => {
@@ -768,19 +778,20 @@ export function App() {
     try {
       const permissionGranted = await isPermissionGranted();
       if (permissionGranted || (await requestPermission()) === "granted") {
-        const actor = actorId === "local"
-          ? t("actors.local")
-          : actorId === "claude"
-            ? t("actors.claude")
-            : t("actors.codex");
         sendNotification({
-          title: t("messages.notification.title", { actor }),
+          title: t("messages.notification.title", { actor: actorDisplayName(actorId) }),
           body: t("messages.notification.body"),
         });
       }
     } catch {
       // Conversation updates remain visible in the app when native notifications fail.
     }
+  }
+
+  function actorDisplayName(actorId: string) {
+    if (actorId === "local") return t("actors.local");
+    if (actorId === "claude") return t("actors.claude");
+    return t("actors.codex");
   }
 
   async function installUpdate() {

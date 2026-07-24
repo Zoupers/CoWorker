@@ -673,6 +673,7 @@ function ConversationController({
     }).then((value) => {
       if (typeof value === "string") setDraftProjectPath(value);
     }).catch(feedback.error)}
+    onCopyMessageError={() => feedback.toast(t("sessions.toast.copyFailed"), "error")}
     onSubmitMessage={(coworkerId) => void submit(coworkerId).catch(feedback.error)}
     onSendToCoworker={(coworkerId) => void submit(coworkerId, true).catch(feedback.error)}
     sessionMode={sessionMode ?? "default"}

@@ -385,6 +385,7 @@ export const zh: Dict = {
   "sessions.attachment.dragOrDownload": "拖拽复制 · 点击下载",
   "sessions.attachment.dragOrRemove": "拖拽复制 · 点击移除",
   "sessions.toast.attachmentSaved": "附件已保存",
+  "sessions.toast.copyFailed": "无法复制消息，请检查系统剪贴板权限后重试。",
 
   "logs.eyebrow": "Ledger",
   "logs.title": "运行账本",

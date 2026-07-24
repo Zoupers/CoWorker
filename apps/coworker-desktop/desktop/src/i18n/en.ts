@@ -404,6 +404,7 @@ export const en = {
   "sessions.attachment.dragOrDownload": "Drag to copy · click to download",
   "sessions.attachment.dragOrRemove": "Drag to copy · click to remove",
   "sessions.toast.attachmentSaved": "Attachment saved",
+  "sessions.toast.copyFailed": "Couldn't copy the message. Check the system clipboard permission and try again.",
 
   // Logs view
   "logs.eyebrow": "Ledger",
