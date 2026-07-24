@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from coworker.channels.registry import ChannelRegistry
 from coworker.channels.wecom.channel import WeComChannel
 from coworker.channels.wecom.runner import WeComRunner
 from coworker.channels.wecom.sender import split_markdown as _split_markdown
@@ -236,7 +237,8 @@ def test_take_fresh_frame_pops_value(tmp_path):
 @pytest.mark.asyncio
 async def test_sender_returns_tool_result(tmp_path):
     runner = _make_runner(tmp_path)
-    result = await runner.sender(
+    channel = WeComChannel(runner)
+    result = await channel.send(
         CommunicateRequest(participant_id="wecom:single:U777", message="hi")
     )
     assert result.is_error is False
@@ -247,7 +249,8 @@ async def test_sender_returns_tool_result(tmp_path):
 async def test_sender_catches_errors(tmp_path):
     runner = _make_runner(tmp_path)
     runner._client.send_message = AsyncMock(side_effect=RuntimeError("boom"))
-    result = await runner.sender(
+    channel = WeComChannel(runner)
+    result = await channel.send(
         CommunicateRequest(participant_id="wecom:single:U777", message="hi")
     )
     assert result.is_error is True
@@ -256,27 +259,21 @@ async def test_sender_catches_errors(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_sender_rejects_unsupported_request_fields(tmp_path):
+async def test_channel_delivers_message_and_reports_unsupported_fields(tmp_path):
     runner = _make_runner(tmp_path)
+    registry = ChannelRegistry()
+    registry.register(WeComChannel(runner))
 
-    conversation_result = await runner.sender(
+    result = await registry.send(
         CommunicateRequest(
             participant_id="wecom:single:U777",
             message="hi",
             conversation_id="thr_1",
-        )
-    )
-    extra_result = await runner.sender(
-        CommunicateRequest(
-            participant_id="wecom:single:U777",
-            message="hi",
             extra={"mode": "plan"},
         )
     )
 
-    assert conversation_result.is_error is True
-    assert conversation_result.content.startswith("消息发送失败：")
-    assert "不支持 conversation_id" in conversation_result.content
-    assert extra_result.is_error is True
-    assert extra_result.content.startswith("消息发送失败：")
-    assert "不支持 extra" in extra_result.content
+    assert not result.is_error
+    assert "不支持 conversation_id, extra" in result.content
+    assert "仅将 message 传给了信道" in result.content
+    runner._client.send_message.assert_awaited_once()

@@ -11,7 +11,7 @@
 
 ## Channel 开发模型
 
-`from coworker.channels import Channel, ChannelRuntime, create_channel_system` 是稳定的开发入口。`create_channel_system(outbox_dir)` 是应用唯一的通信装配入口，返回：
+`from coworker.channels import BaseChannel, ChannelCapabilities, ChannelRuntime, create_channel_system` 是稳定的开发入口。`create_channel_system(outbox_dir)` 是应用唯一的通信装配入口，返回：
 
 - `registry`：注册 Channel、路由 inbound/outbound，并确保共享 Runtime 只启动和停止一次。
 - `stream_runtime`：承接 WS/SSE 连接、participant 注册、附件存储和离线 outbox；`app.py` 只依赖这个宿主能力，不依赖 `CommunicateTool`。
@@ -37,6 +37,14 @@ class TeamChannel(BaseChannel):
 channels = create_channel_system("data/outbox")
 channels.registry.register(TeamChannel())
 ```
+
+只包装现有异步发送函数时，不需要再定义一个 Channel 类：
+
+```python
+channels.registry.register(BaseChannel.from_sender("team:", send_to_team))
+```
+
+Channel 通过 `ChannelCapabilities` 声明是否支持 `conversation_id`、`attachments` 和 `extra`，默认仅支持 `message`。Registry 会在发送前统一省略目标不支持的可选字段：只要仍有正文或其他受支持内容，就继续投递，并在工具结果中明确告诉 AI 哪些字段未传递；不会因附件或 `extra` 不受支持而丢掉正文。
 
 需要入站时覆写 `receive_raw`，归一化为 `IncomingEvent` 后调用 `publish_inbound`；需要后台连接时注入实现了 `start` / `stop` 的 `ChannelRuntime`。Registry 会拒绝重复名称、重复 participant 前缀和启动后的迟到注册，让配置错误在启动阶段直接暴露。
 

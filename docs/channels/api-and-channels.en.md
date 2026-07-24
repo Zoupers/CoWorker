@@ -11,7 +11,7 @@ All outbound communication is routed by `ChannelRegistry` to the appropriate cha
 
 ## Channel development model
 
-`from coworker.channels import Channel, ChannelRuntime, create_channel_system` is the stable development entry point. `create_channel_system(outbox_dir)` is the application's single communication composition root. It returns:
+`from coworker.channels import BaseChannel, ChannelCapabilities, ChannelRuntime, create_channel_system` is the stable development entry point. `create_channel_system(outbox_dir)` is the application's single communication composition root. It returns:
 
 - `registry`, which registers Channels, routes inbound and outbound traffic, and starts or stops each shared Runtime exactly once.
 - `stream_runtime`, which owns WS/SSE connections, participant registrations, attachment storage, and offline outbox delivery. `app.py` consumes these host capabilities directly rather than depending on `CommunicateTool`.
@@ -37,6 +37,14 @@ class TeamChannel(BaseChannel):
 channels = create_channel_system("data/outbox")
 channels.registry.register(TeamChannel())
 ```
+
+When wrapping an existing async sender, no Channel class is needed:
+
+```python
+channels.registry.register(BaseChannel.from_sender("team:", send_to_team))
+```
+
+A Channel declares support for `conversation_id`, `attachments`, and `extra` through `ChannelCapabilities`; the default accepts `message` only. Before delivery, the Registry omits unsupported optional fields. As long as a message or other supported content remains, delivery continues and the tool result tells the AI exactly which fields were not passed. Unsupported attachments or `extra` therefore never discard a valid message.
 
 For inbound traffic, override `receive_raw`, normalize the payload into an `IncomingEvent`, then call `publish_inbound`. For background connections, inject a `ChannelRuntime` that implements `start` and `stop`. The Registry rejects duplicate names, duplicate participant prefixes, and late registration after startup so configuration mistakes fail during composition.
 

@@ -12,8 +12,7 @@ from coworker.channels.base import InboundHandler
 from coworker.channels.wecom import adapter
 from coworker.channels.wecom.contacts import ContactsStore, normalize_chat_type
 from coworker.channels.wecom.sender import WeComSender
-from coworker.core.types import IncomingEvent, ToolResult
-from coworker.i18n import tr
+from coworker.core.types import IncomingEvent
 
 
 class _LoguruLogger:
@@ -47,7 +46,6 @@ class _LoguruLogger:
 
 if TYPE_CHECKING:
     from coworker.core.config import WeComConfig
-    from coworker.core.types import CommunicateRequest
 
 _FRAME_TTL = 600.0  # 10 minutes
 
@@ -209,41 +207,9 @@ class WeComRunner:
         _, chat_id = adapter.parse_participant(participant_id)
         return self._last_sent_at.get(chat_id), self._last_received_at.get(chat_id)
 
-    # ── adapter for CommunicateTool ──────────────────────────────────────
-
     def resolve_participant(self, participant_id: str) -> str | None:
         """若 participant_id 是已知的 WeCom chat_id，返回带前缀的规范化 ID；否则返回 None。"""
         chat_type = normalize_chat_type(self._contacts.get(participant_id))
         if chat_type is None:
             return None
         return f"wecom:{chat_type}:{participant_id}"
-
-    async def sender(
-        self,
-        request: CommunicateRequest,
-    ) -> ToolResult:
-        participant_id = request.participant_id
-        try:
-            if request.conversation_id:
-                return ToolResult(
-                    tool_call_id="",
-                    content=tr("tool_result.communicate.wecom_conversation_unsupported"),
-                    is_error=True,
-                )
-            if request.extra:
-                return ToolResult(
-                    tool_call_id="",
-                    content=tr("tool_result.communicate.wecom_extra_unsupported"),
-                    is_error=True,
-                )
-            await self.send(participant_id, request.message, request.attachments)
-            return ToolResult(
-                tool_call_id="",
-                content=tr("tool_result.communicate.wecom_sent", participant=participant_id),
-            )
-        except Exception as e:
-            return ToolResult(
-                tool_call_id="",
-                content=tr("tool_result.communicate.wecom_failed", error=e),
-                is_error=True,
-            )

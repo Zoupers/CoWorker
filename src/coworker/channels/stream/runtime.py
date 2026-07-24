@@ -173,9 +173,12 @@ class StreamRuntime:
                 ),
             )
         try:
-            unsupported = self._validate_outbox_request(request)
-            if unsupported is not None:
-                return unsupported
+            if not request.message:
+                return ToolResult(
+                    tool_call_id="",
+                    content=tr("tool_result.communicate.message_empty"),
+                    is_error=True,
+                )
             self._outbox.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             safe_participant_id = (
@@ -225,21 +228,6 @@ class StreamRuntime:
 
     async def stop(self) -> None:
         """The API shutdown path closes stream connections."""
-
-    @staticmethod
-    def _validate_outbox_request(request: CommunicateRequest) -> ToolResult | None:
-        if request.conversation_id:
-            key = "tool_result.communicate.conversation_unsupported"
-        elif request.extra:
-            key = "tool_result.communicate.extra_unsupported"
-        elif request.attachments:
-            key = "tool_result.communicate.attachments_unsupported"
-        elif not request.message:
-            key = "tool_result.communicate.message_empty"
-        else:
-            return None
-        return ToolResult(tool_call_id="", content=tr(key), is_error=True)
-
 
 def _activity_timestamp() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")

@@ -78,7 +78,7 @@ class ChannelRegistry:
     def supports_message_extra(self, participant_id: str) -> bool:
         canonical, channel = self._resolve(participant_id)
         target = channel if channel is not None else self._fallback
-        return target.supports_extra_for(canonical) if target is not None else False
+        return target.capabilities_for(canonical).extra if target is not None else False
 
     async def send(self, request: CommunicateRequest) -> ToolResult:
         canonical, channel = self._resolve(request.participant_id)
@@ -89,7 +89,19 @@ class ChannelRegistry:
                 content=tr("tool_result.communicate.failed", error="no channel registered"),
                 is_error=True,
             )
-        return await target.send(replace(request, participant_id=canonical))
+        outbound, omitted = target.capabilities_for(canonical).filter(
+            replace(request, participant_id=canonical)
+        )
+        result = await target.send(outbound)
+        if result.is_error or not omitted:
+            return result
+        notice_key = (
+            "tool_result.communicate.unsupported_message_only"
+            if self._contains_only_message(outbound)
+            else "tool_result.communicate.unsupported_omitted"
+        )
+        notice = tr(notice_key, fields=", ".join(omitted))
+        return replace(result, content=f"{result.content}\n{notice}")
 
     def list_connections(self) -> list[ConnectionInfo]:
         connections: list[ConnectionInfo] = []
@@ -189,6 +201,12 @@ class ChannelRegistry:
                 seen.add(identity)
                 runtimes.append(channel.runtime)
         return runtimes
+
+    @staticmethod
+    def _contains_only_message(request: CommunicateRequest) -> bool:
+        return bool(request.message) and not (
+            request.conversation_id or request.attachments or request.extra
+        )
 
     @staticmethod
     def _report_runtime_exit(task: asyncio.Task[None]) -> None:

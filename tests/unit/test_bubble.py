@@ -12,7 +12,7 @@ from coworker.agent.bubble import Bubble, BubbleStore
 from coworker.agent.bubble_handoff import BubbleHandoffMatcher
 from coworker.agent.bubble_loop import BubbleMiniLoop, _build_merge_message
 from coworker.agent.usage_stats import UsageStatsCollector
-from coworker.channels.base import InlineChannel
+from coworker.channels.base import BaseChannel, ChannelCapabilities
 from coworker.channels.system import create_channel_system
 from coworker.core.types import AttachmentData, IncomingEvent, LLMResponse, Message, ToolCall
 from coworker.tools.bubble_tools import (
@@ -686,7 +686,13 @@ class TestBubbleMiniLoop:
         registry = ToolRegistry()
         channel_system = create_channel_system(tmp_path / "outbox")
         communicate = CommunicateTool(channel_system.registry)
-        channel_system.registry.register(InlineChannel("wecom:", sender))
+        channel_system.registry.register(
+            BaseChannel.from_sender(
+                "wecom:",
+                sender,
+                capabilities=ChannelCapabilities(conversation_id=True),
+            )
+        )
         registry.register(communicate)
         mock_brain.think = AsyncMock(
             side_effect=[
@@ -765,10 +771,13 @@ class TestBubbleMiniLoop:
         channel_system = create_channel_system(tmp_path / "outbox")
         communicate = CommunicateTool(channel_system.registry)
         supports_extra = participant_id.startswith("coworker-desktop:")
-        channel_system.registry.register(InlineChannel(
+        channel_system.registry.register(BaseChannel.from_sender(
             f"{participant_id.split(':', 1)[0]}:",
             sender,
-            supports_extra=supports_extra,
+            capabilities=ChannelCapabilities(
+                conversation_id=True,
+                extra=supports_extra,
+            ),
         ))
         registry.register(communicate)
         mock_brain.think = AsyncMock(
@@ -1184,10 +1193,11 @@ class TestBubbleSpawnTool:
 
         channel_system = create_channel_system(tmp_path / "outbox")
         communicate = CommunicateTool(channel_system.registry)
-        channel_system.registry.register(InlineChannel(
+        channel_system.registry.register(BaseChannel.from_sender(
             "wecom:",
             sender,
             lambda pid: f"wecom:single:{pid}" if pid == "alice" else None,
+            capabilities=ChannelCapabilities(conversation_id=True),
         ))
         tool = self._make_tool(
             store,
@@ -1229,10 +1239,10 @@ class TestBubbleSpawnTool:
         channel_system = create_channel_system(tmp_path / "outbox")
         communicate = CommunicateTool(channel_system.registry)
         channel_system.registry.register(
-            InlineChannel("chan_a:", sender, lambda pid: f"chan_a:{pid}")
+            BaseChannel.from_sender("chan_a:", sender, lambda pid: f"chan_a:{pid}")
         )
         channel_system.registry.register(
-            InlineChannel("chan_b:", sender, lambda pid: f"chan_b:{pid}")
+            BaseChannel.from_sender("chan_b:", sender, lambda pid: f"chan_b:{pid}")
         )
         tool = self._make_tool(
             store,
@@ -1274,7 +1284,13 @@ class TestBubbleSpawnTool:
 
         channel_system = create_channel_system(tmp_path / "outbox")
         communicate = CommunicateTool(channel_system.registry)
-        channel_system.registry.register(InlineChannel("wecom:", sender))
+        channel_system.registry.register(
+            BaseChannel.from_sender(
+                "wecom:",
+                sender,
+                capabilities=ChannelCapabilities(conversation_id=True),
+            )
+        )
         tool = self._make_tool(
             store,
             mock_short_term,
@@ -1510,7 +1526,13 @@ class TestBubbleSpawnTool:
 
         channel_system = create_channel_system(tmp_path / "outbox")
         communicate = CommunicateTool(channel_system.registry)
-        channel_system.registry.register(InlineChannel("wecom:", sender))
+        channel_system.registry.register(
+            BaseChannel.from_sender(
+                "wecom:",
+                sender,
+                capabilities=ChannelCapabilities(conversation_id=True),
+            )
+        )
         tool = self._make_tool(
             store,
             mock_short_term,
@@ -2268,7 +2290,13 @@ class TestToolForkBubbleScope:
 
         channel_system = create_channel_system(tmp_path / "outbox")
         tool = CommunicateTool(channel_system.registry)
-        channel_system.registry.register(InlineChannel("wecom:", sender))
+        channel_system.registry.register(
+            BaseChannel.from_sender(
+                "wecom:",
+                sender,
+                capabilities=ChannelCapabilities(conversation_id=True),
+            )
+        )
         scope = ToolScope(
             task_store=TaskStore(store_path=None),
             job_store=BackgroundJobStore(),

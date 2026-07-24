@@ -10,11 +10,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from coworker.channels.base import ConnectionInfo, InlineChannel
+from coworker.channels.base import BaseChannel, ChannelCapabilities, ConnectionInfo
 from coworker.channels.desktop import inbound as desktop_inbound
 from coworker.channels.desktop.communicate_sender import DESKTOP_PREFIX
 from coworker.channels.inbound import AttachmentStore, InboundEnvelope
-from coworker.core.types import IncomingEvent
+from coworker.core.types import CommunicateRequest, IncomingEvent, ToolResult
 
 if TYPE_CHECKING:
     from coworker.channels.desktop.communicate_sender import DesktopCommunicateSender
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from coworker.channels.desktop.registry import DesktopRegistry
 
 
-class DesktopChannel(InlineChannel):
+class DesktopChannel(BaseChannel):
     """CoWorker Desktop outbound channel (prefix ``coworker-desktop:``)."""
 
     def __init__(
@@ -33,15 +33,25 @@ class DesktopChannel(InlineChannel):
         attachments_dir: str | Path,
     ) -> None:
         super().__init__(
-            DESKTOP_PREFIX,
-            sender.send,
-            supports_extra=True,
-            name="desktop",
             runtime=sender.runtime,
+            capabilities=ChannelCapabilities(
+                conversation_id=True,
+                attachments=True,
+                extra=True,
+            ),
         )
+        self.name = "desktop"
+        self.participant_prefix = DESKTOP_PREFIX
+        self._sender = sender
         self._registry = registry
         self._dispatcher = dispatcher
         self._attachments = AttachmentStore(attachments_dir)
+
+    async def send(self, request: CommunicateRequest) -> ToolResult:
+        result = await self._sender.send(request)
+        if not result.is_error:
+            self._record_sent(request.participant_id)
+        return result
 
     async def receive_raw(self, envelope: InboundEnvelope) -> None:
         payload = envelope.payload if isinstance(envelope.payload, dict) else {}

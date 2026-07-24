@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
-from coworker.channels.base import BaseChannel, ConnectionInfo
+from coworker.channels.base import BaseChannel, ChannelCapabilities, ConnectionInfo
 from coworker.channels.inbound import InboundEnvelope
 from coworker.channels.stream.runtime import StreamRuntime
 from coworker.core.types import CommunicateRequest, IncomingEvent, ToolResult
@@ -47,8 +47,10 @@ class StreamChannel(BaseChannel):
             )
         )
 
-    def supports_extra_for(self, participant_id: str) -> bool:
-        return self.runtime.supports_message_extra(participant_id)
+    def capabilities_for(self, participant_id: str) -> ChannelCapabilities:
+        if self.runtime.supports_message_extra(participant_id):
+            return ChannelCapabilities(conversation_id=True, attachments=True, extra=True)
+        return ChannelCapabilities()
 
     async def send(self, request: CommunicateRequest) -> ToolResult:
         return await self.runtime.send(request)

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from coworker.channels.base import BaseChannel, ConnectionInfo, ParticipantIdResolutionError
+from coworker.channels.base import (
+    BaseChannel,
+    ChannelCapabilities,
+    ConnectionInfo,
+    ParticipantIdResolutionError,
+)
 from coworker.channels.registry import ChannelRegistry
 from coworker.core.types import CommunicateRequest, ToolResult
 
@@ -39,10 +44,17 @@ class _FakeChannel:
         self.sent.append(request)
         return ToolResult(tool_call_id="", content=f"sent:{self.name}")
 
-    def supports_extra_for(self, participant_id: str) -> bool:
-        if self.participant_prefix == "":
-            return participant_id in self._live
-        return self._supports_extra
+    def capabilities_for(self, participant_id: str) -> ChannelCapabilities:
+        rich = (
+            participant_id in self._live
+            if self.participant_prefix == ""
+            else self._supports_extra
+        )
+        return ChannelCapabilities(
+            conversation_id=rich,
+            attachments=rich,
+            extra=rich,
+        )
 
     def list_connections(self) -> list[ConnectionInfo]:
         return [
@@ -103,6 +115,26 @@ async def test_base_channel_only_requires_outbound_implementation(
     assert result.content == "hello"
     assert channel.list_connections() == []
     assert channel.resolve("alice") is None
+
+
+@pytest.mark.asyncio
+async def test_base_channel_from_sender_is_minimal_registration_path(
+    registry: ChannelRegistry,
+) -> None:
+    requests: list[CommunicateRequest] = []
+
+    async def sender(request: CommunicateRequest) -> ToolResult:
+        requests.append(request)
+        return ToolResult(tool_call_id="", content="sent")
+
+    registry.register(BaseChannel.from_sender("team:", sender))
+
+    result = await registry.send(
+        CommunicateRequest(participant_id="team:alice", message="hello")
+    )
+
+    assert not result.is_error
+    assert requests[0].message == "hello"
 
 
 @pytest.mark.asyncio

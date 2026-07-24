@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from coworker.channels.base import InlineChannel
+from coworker.channels.base import BaseChannel, ChannelCapabilities
 from coworker.channels.system import create_channel_system
 from coworker.core.types import (
     AgentState,
@@ -17,6 +17,7 @@ from coworker.core.types import (
     ToolCall,
     ToolResult,
 )
+from coworker.i18n import locale_context
 from coworker.memory.short_term import ShortTermMemory
 from coworker.tools.base import Tool, ToolDefinition
 from coworker.tools.communicate_tool import CommunicateTool
@@ -1217,8 +1218,14 @@ class TestCommunicateToolCheckers:
         async def sender(request: CommunicateRequest):
             return ToolResult(tool_call_id="", content="ok")
 
-        channel_system.registry.register(InlineChannel("plain:", sender))
-        channel_system.registry.register(InlineChannel("rich:", sender, supports_extra=True))
+        channel_system.registry.register(BaseChannel.from_sender("plain:", sender))
+        channel_system.registry.register(
+            BaseChannel.from_sender(
+                "rich:",
+                sender,
+                capabilities=ChannelCapabilities(extra=True),
+            )
+        )
         queue: asyncio.Queue = asyncio.Queue()
         channel_system.stream_runtime.register_session("stream-client", queue)
 
@@ -1234,7 +1241,7 @@ class TestCommunicateToolCheckers:
         async def sender(request: CommunicateRequest):
             return ToolResult(tool_call_id="", content="ok")
 
-        channel_system.registry.register(InlineChannel(
+        channel_system.registry.register(BaseChannel.from_sender(
             "chan:",
             sender,
             lambda pid: f"chan:single:{pid}" if pid == "alice" else None,
@@ -1255,7 +1262,7 @@ class TestCommunicateToolCheckers:
             return ToolResult(tool_call_id="", content="ok")
 
         channel_system.registry.register(
-            InlineChannel("chan:", sender, lambda pid: f"chan:{pid}")
+            BaseChannel.from_sender("chan:", sender, lambda pid: f"chan:{pid}")
         )
         result = await tool.execute(message="hi", participant_id="chan:alice")
         assert not result.is_error
@@ -1271,7 +1278,7 @@ class TestCommunicateToolCheckers:
             sent.append(request.participant_id)
             return ToolResult(tool_call_id="", content="ok")
 
-        channel_system.registry.register(InlineChannel(
+        channel_system.registry.register(BaseChannel.from_sender(
             "chan:",
             sender,
             lambda pid: f"chan:single:{pid}" if pid == "alice" else None,
@@ -1292,10 +1299,10 @@ class TestCommunicateToolCheckers:
             return ToolResult(tool_call_id="", content="ok")
 
         channel_system.registry.register(
-            InlineChannel("chan_a:", sender_a, lambda pid: f"chan_a:{pid}")
+            BaseChannel.from_sender("chan_a:", sender_a, lambda pid: f"chan_a:{pid}")
         )
         channel_system.registry.register(
-            InlineChannel("chan_b:", sender_b, lambda pid: f"chan_b:{pid}")
+            BaseChannel.from_sender("chan_b:", sender_b, lambda pid: f"chan_b:{pid}")
         )
         result = await tool.execute(message="hi", participant_id="alice")
         assert result.is_error
@@ -1313,7 +1320,17 @@ class TestCommunicateToolCheckers:
             seen.append(request)
             return ToolResult(tool_call_id="", content="ok")
 
-        channel_system.registry.register(InlineChannel("rich:", sender))
+        channel_system.registry.register(
+            BaseChannel.from_sender(
+                "rich:",
+                sender,
+                capabilities=ChannelCapabilities(
+                    conversation_id=True,
+                    attachments=True,
+                    extra=True,
+                ),
+            )
+        )
 
         result = await tool.execute(
             participant_id="rich:alice",
@@ -1348,8 +1365,10 @@ class TestCommunicateToolCheckers:
             seen.append("specific")
             return ToolResult(tool_call_id="", content="specific")
 
-        channel_system.registry.register(InlineChannel("rich:", generic_sender))
-        channel_system.registry.register(InlineChannel("rich:team:", specific_sender))
+        channel_system.registry.register(BaseChannel.from_sender("rich:", generic_sender))
+        channel_system.registry.register(
+            BaseChannel.from_sender("rich:team:", specific_sender)
+        )
 
         result = await tool.execute(participant_id="rich:team:alice", message="hi")
 
@@ -1366,7 +1385,9 @@ class TestCommunicateToolCheckers:
         async def sender(request: CommunicateRequest):
             return ToolResult(tool_call_id="", content="ok")
 
-        channel_system.registry.register(InlineChannel("chan:", sender, lambda pid: None))
+        channel_system.registry.register(
+            BaseChannel.from_sender("chan:", sender, lambda pid: None)
+        )
         result = await tool.execute(message="hello", participant_id="unknown_user")
         assert not result.is_error
         files = list(outbox.glob("*unknown_user*"))
@@ -1406,7 +1427,7 @@ class TestCommunicateToolCheckers:
         channel_system = create_channel_system(tmp_path / "outbox")
         tool = CommunicateTool(channel_system.registry)
         sender = DesktopCommunicateSender(channel_system.stream_runtime)
-        channel_system.registry.register(InlineChannel(DESKTOP_PREFIX, sender.send))
+        channel_system.registry.register(BaseChannel.from_sender(DESKTOP_PREFIX, sender.send))
         queue: asyncio.Queue = asyncio.Queue()
         participant_id = "coworker-desktop:desk-1:claude:cw-1:abcd1234"
         assert channel_system.stream_runtime.register_session(participant_id, queue) is True
@@ -1429,36 +1450,62 @@ class TestCommunicateToolCheckers:
         assert "未连接" in offline.content
 
     @pytest.mark.asyncio
-    async def test_unconnected_plain_target_rejects_structured_fields(self, tmp_path):
+    @pytest.mark.parametrize(
+        ("locale", "expected"),
+        [
+            (
+                "zh-CN",
+                "该通信目标不支持 conversation_id, attachments, extra。"
+                "这些字段未被传递，仅将 message 传给了信道。",
+            ),
+            (
+                "en",
+                "This target does not support conversation_id, attachments, extra. "
+                "Those fields were not delivered; only message was passed to the channel.",
+            ),
+        ],
+    )
+    async def test_unconnected_target_delivers_message_and_reports_omitted_fields(
+        self,
+        tmp_path,
+        locale,
+        expected,
+    ):
         file_path = tmp_path / "note.txt"
         file_path.write_text("hello", encoding="utf-8")
+        outbox = tmp_path / "outbox"
+        channel_system = create_channel_system(outbox)
+        tool = CommunicateTool(channel_system.registry)
+
+        with locale_context(locale):
+            result = await tool.execute(
+                participant_id="alice",
+                conversation_id="thr_1",
+                message="hi",
+                attachments=[{"path": str(file_path)}],
+                extra={"mode": "plan"},
+            )
+
+        assert not result.is_error
+        assert expected in result.content
+        files = list(outbox.glob("*alice*"))
+        assert len(files) == 1
+        assert files[0].read_text(encoding="utf-8") == "hi"
+
+    @pytest.mark.asyncio
+    async def test_unconnected_target_rejects_unsupported_content_without_message(
+        self, tmp_path
+    ):
         channel_system = create_channel_system(tmp_path / "outbox")
         tool = CommunicateTool(channel_system.registry)
 
-        conversation_result = await tool.execute(
+        result = await tool.execute(
             participant_id="alice",
-            conversation_id="thr_1",
-            message="hi",
-        )
-        attachment_result = await tool.execute(
-            participant_id="alice",
-            attachments=[{"path": str(file_path)}],
-        )
-        extra_result = await tool.execute(
-            participant_id="alice",
-            message="hi",
-            extra={"mode": "plan"},
+            attachments=[{"path": str(tmp_path / "note.txt")}],
         )
 
-        assert conversation_result.is_error
-        assert conversation_result.content.startswith("消息发送失败：")
-        assert "不支持 conversation_id" in conversation_result.content
-        assert attachment_result.is_error
-        assert attachment_result.content.startswith("消息发送失败：")
-        assert "不支持附件" in attachment_result.content
-        assert extra_result.is_error
-        assert extra_result.content.startswith("消息发送失败：")
-        assert "不支持 extra" in extra_result.content
+        assert result.is_error
+        assert "message 不能为空" in result.content
 
 
 class TestVisualAnalysisTool:

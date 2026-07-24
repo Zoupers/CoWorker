@@ -1,10 +1,10 @@
-"""Channel protocol and lightweight inline implementation."""
+"""Channel protocol and shared extension defaults."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
@@ -32,6 +32,43 @@ class ParticipantIdResolutionError(ValueError):
     """Raised when a shorthand participant ID cannot be resolved unambiguously."""
 
 
+@dataclass(frozen=True)
+class ChannelCapabilities:
+    """Optional outbound fields accepted by a channel."""
+
+    conversation_id: bool = False
+    attachments: bool = False
+    extra: bool = False
+
+    def filter(
+        self, request: CommunicateRequest
+    ) -> tuple[CommunicateRequest, tuple[str, ...]]:
+        omitted: list[str] = []
+        conversation_id = request.conversation_id
+        attachments = request.attachments
+        extra = request.extra
+        if conversation_id and not self.conversation_id:
+            omitted.append("conversation_id")
+            conversation_id = None
+        if attachments and not self.attachments:
+            omitted.append("attachments")
+            attachments = []
+        if extra and not self.extra:
+            omitted.append("extra")
+            extra = {}
+        if not omitted:
+            return request, ()
+        return (
+            replace(
+                request,
+                conversation_id=conversation_id,
+                attachments=attachments,
+                extra=extra,
+            ),
+            tuple(omitted),
+        )
+
+
 class BaseChannel(ABC):
     """Default implementation for the non-transport parts of a Channel."""
 
@@ -42,13 +79,34 @@ class BaseChannel(ABC):
         self,
         *,
         runtime: ChannelRuntime | None = None,
-        supports_extra: bool = False,
+        capabilities: ChannelCapabilities | None = None,
     ) -> None:
         self._runtime = runtime or DEFAULT_RUNTIME
-        self._supports_extra = supports_extra
+        self._capabilities = capabilities or ChannelCapabilities()
         self._last_sent_at: dict[str, str] = {}
         self._last_received_at: dict[str, str] = {}
         self._inbound_handler: InboundHandler | None = None
+
+    @classmethod
+    def from_sender(
+        cls,
+        prefix: str,
+        sender: Callable[[CommunicateRequest], Awaitable[ToolResult]],
+        resolver: Callable[[str], str | None] | None = None,
+        *,
+        capabilities: ChannelCapabilities | None = None,
+        name: str | None = None,
+        runtime: ChannelRuntime | None = None,
+    ) -> BaseChannel:
+        """Build a minimal outbound channel from an async sender."""
+        return _SenderChannel(
+            prefix,
+            sender,
+            resolver,
+            capabilities=capabilities,
+            name=name,
+            runtime=runtime,
+        )
 
     @property
     def runtime(self) -> ChannelRuntime:
@@ -78,8 +136,8 @@ class BaseChannel(ABC):
     def activity_for(self, participant_id: str) -> tuple[str | None, str | None]:
         return self._last_sent_at.get(participant_id), self._last_received_at.get(participant_id)
 
-    def supports_extra_for(self, participant_id: str) -> bool:
-        return self._supports_extra
+    def capabilities_for(self, participant_id: str) -> ChannelCapabilities:
+        return self._capabilities
 
     def list_connections(self) -> list[ConnectionInfo]:
         return []
@@ -88,14 +146,8 @@ class BaseChannel(ABC):
         self._last_sent_at[participant_id] = _activity_timestamp()
 
 
-class InlineChannel(BaseChannel):
-    """Minimal :class:`Channel` wrapping a sender callable.
-
-    The simplest way to register a channel: a prefix, an async sender, an
-    optional shorthand resolver, and a static ``supports_extra`` flag. Real channels
-    (desktop, wecom, stream) provide richer ``list_connections`` / lifecycle,
-    but anything that just routes by prefix and sends can use this.
-    """
+class _SenderChannel(BaseChannel):
+    """Private adapter backing :meth:`BaseChannel.from_sender`."""
 
     def __init__(
         self,
@@ -103,11 +155,11 @@ class InlineChannel(BaseChannel):
         sender: Callable[[CommunicateRequest], Awaitable[ToolResult]],
         resolver: Callable[[str], str | None] | None = None,
         *,
-        supports_extra: bool = False,
+        capabilities: ChannelCapabilities | None = None,
         name: str | None = None,
         runtime: ChannelRuntime | None = None,
     ) -> None:
-        super().__init__(runtime=runtime, supports_extra=supports_extra)
+        super().__init__(runtime=runtime, capabilities=capabilities)
         self.name = name or prefix.rstrip(":") or "inline"
         self.participant_prefix = prefix
         self._sender = sender
@@ -156,12 +208,8 @@ class Channel(Protocol):
         """Normalize a raw protocol envelope and publish it through this channel."""
         ...
 
-    def supports_extra_for(self, participant_id: str) -> bool:
-        """Whether this channel accepts structured ``extra`` for the participant.
-
-        Static for prefix-routed channels (desktop yes, wecom no); per-participant
-        for the stream fallback (only live WS/SSE connections accept extra).
-        """
+    def capabilities_for(self, participant_id: str) -> ChannelCapabilities:
+        """Return optional outbound fields accepted for this participant."""
         ...
 
     def list_connections(self) -> list[ConnectionInfo]:
