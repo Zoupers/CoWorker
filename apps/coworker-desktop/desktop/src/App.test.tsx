@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { App } from "./App";
+import { App, shouldNotifyActorEvent } from "./App";
 import { LanguageProvider } from "./i18n";
 import * as tauri from "./tauri";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -315,6 +315,57 @@ describe("App backend operation wiring", () => {
       title: "New Local message",
       body: "Open CoWorker Desktop to view the conversation.",
     }));
+    hasFocus.mockRestore();
+  });
+
+  it("notifies for Coworker writes and terminal results but ignores Codex intermediate events", () => {
+    const notifiedIds = new Set<string>();
+    const event = (
+      messageId: string,
+      authorKind: string,
+      kind: string,
+      streaming = false,
+    ): ActorStreamEvent => ({
+      actor_id: "codex",
+      conversation_id: "thread-1",
+      message_id: messageId,
+      event: {
+        type: "conversation_updated",
+        message: {
+          author_kind: authorKind,
+          metadata: { kind, streaming },
+        },
+      },
+    });
+
+    expect(shouldNotifyActorEvent(event("coworker-1", "coworker", "message"), notifiedIds)).toBe(true);
+    expect(shouldNotifyActorEvent(event("final-1", "codex", "message"), notifiedIds)).toBe(true);
+    expect(shouldNotifyActorEvent(event("tool-1", "tool", "tool_call"), notifiedIds)).toBe(false);
+    expect(shouldNotifyActorEvent(event("reasoning-1", "codex", "reasoning"), notifiedIds)).toBe(false);
+    expect(shouldNotifyActorEvent(event("stream-1", "codex", "message", true), notifiedIds)).toBe(false);
+  });
+
+  it("does not toast for the conversation currently visible in the focused window", async () => {
+    const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const user = await renderApp(runningStatus);
+    await openSessions(user);
+    await user.click(await screen.findByRole("button", { name: /Bridge thread/ }));
+
+    act(() => actorStreamHandlers.forEach((handler) => handler({
+      actor_id: "codex",
+      conversation_id: "thread-1",
+      message_id: "coworker-active-thread",
+      event: {
+        type: "conversation_updated",
+        message: {
+          author_kind: "coworker",
+          metadata: { kind: "message", streaming: false },
+        },
+      },
+    })));
+
+    expect(screen.queryByText("New Codex message")).not.toBeInTheDocument();
+    expect(sendNotification).not.toHaveBeenCalled();
     hasFocus.mockRestore();
   });
 

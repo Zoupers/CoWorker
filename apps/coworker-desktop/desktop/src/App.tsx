@@ -79,6 +79,7 @@ import {
   DesktopUpdateInfo,
   DiagnosticResult,
   DesktopApproval,
+  type DesktopActorId,
   ResolveApprovalResult,
   startBridge,
   startBridgeLogStream,
@@ -97,6 +98,11 @@ const defaultPath = "coworker_desktop.json";
 const lifePanelStorageKey = "coworker-desktop-life-panel-collapsed";
 const onboardingCompletedStorageKey = "coworker-desktop-onboarding-completed";
 
+type ActiveConversation = {
+  actorId: DesktopActorId;
+  conversationId: string;
+};
+
 function readInitialLifePanelCollapsed() {
   try {
     return window.localStorage.getItem(lifePanelStorageKey) === "true";
@@ -110,19 +116,42 @@ export function shouldNotifyActorEvent(
   notifiedIds: Set<string>,
 ): boolean {
   const eventType = String(update.event.type ?? "");
-  const message = update.event.message;
-  const authorKind = message && typeof message === "object" && !Array.isArray(message)
-    ? String((message as Record<string, unknown>).author_kind ?? "")
-    : "";
-  const isIncomingConversation = eventType === "conversation_updated"
-    && (update.actor_id === "local" || (authorKind !== "" && authorKind !== "local"));
+  const message = update.event.message && typeof update.event.message === "object" && !Array.isArray(update.event.message)
+    ? update.event.message as Record<string, unknown>
+    : null;
+  const metadata = message?.metadata && typeof message.metadata === "object" && !Array.isArray(message.metadata)
+    ? message.metadata as Record<string, unknown>
+    : null;
+  const authorKind = String(message?.author_kind ?? "");
+  const messageKind = String(metadata?.kind ?? "");
+  const streaming = metadata?.streaming === true;
+  const isIncomingCoworker = eventType === "conversation_updated"
+    && (
+      authorKind === "coworker"
+      || (message === null && update.message_id !== null && (update.actor_id === "local" || update.actor_id === "claude"))
+    );
+  const isCodexTerminalMessage = update.actor_id === "codex"
+    && eventType === "conversation_updated"
+    && !streaming
+    && (
+      (authorKind === "codex" && messageKind === "message")
+      || (authorKind === "system" && ["empty_response", "plan", "system"].includes(messageKind))
+    );
   const isClaudeResult = update.actor_id === "claude" && eventType === "result";
-  if (!isIncomingConversation && !isClaudeResult) return false;
+  if (!isIncomingCoworker && !isCodexTerminalMessage && !isClaudeResult) return false;
   const notificationId = update.message_id
     ?? `${update.actor_id}:${update.conversation_id}:${eventType}`;
   if (notifiedIds.has(notificationId)) return false;
   notifiedIds.add(notificationId);
   return true;
+}
+
+export function isActiveConversationEvent(
+  update: ActorStreamEvent,
+  activeConversation: ActiveConversation | null,
+): boolean {
+  return activeConversation?.actorId === update.actor_id
+    && activeConversation.conversationId === update.conversation_id;
 }
 
 export function shouldSendNativeNotification(
@@ -176,6 +205,7 @@ export function App() {
   const handledDesktopUpdatePushesRef = useRef(new Set<string>());
   const notifiedDesktopUpdateVersionsRef = useRef(new Set<string>());
   const notifiedMessageIdsRef = useRef(new Set<string>());
+  const activeConversationRef = useRef<ActiveConversation | null>(null);
   const toastIdRef = useRef(0);
   const toastTimersRef = useRef<Map<number, number>>(new Map());
   const savedConfigRef = useRef<ConfigValue>({});
@@ -558,6 +588,7 @@ export function App() {
     listenActorStreamEvents((update) => {
       if (!shouldNotifyActorEvent(update, notifiedMessageIdsRef.current)) return;
       if (!shouldSendNativeNotification()) {
+        if (isActiveConversationEvent(update, activeConversationRef.current)) return;
         showToast(t("messages.notification.title", { actor: actorDisplayName(update.actor_id) }), "info");
         return;
       }
@@ -1309,6 +1340,9 @@ export function App() {
             if (index >= 0) setSelectedCoworkerIndex(index);
           }}
           feedback={conversationFeedback}
+          onActiveConversationChange={(activeConversation) => {
+            activeConversationRef.current = activeConversation;
+          }}
         />
 
         {desktopApprovals[0] && (
