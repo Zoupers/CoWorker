@@ -3,6 +3,7 @@
 ## Unreleased
 
 - fix(channels): route inbound payloads by their owning transport instead of outbound participant resolution, pass WeCom events through `WeComChannel`, and run channel lifecycles concurrently under `ChannelHost`
+- fix(api): remove legacy Codex Bridge participant-prefix rejection paths so former prefixes follow normal channel routing
 
 ## 0.3.2 - 2026-07-23
 

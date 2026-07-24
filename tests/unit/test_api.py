@@ -219,12 +219,21 @@ class TestPostMessages:
     @pytest.mark.parametrize(
         "sender_id", ["codex:codex-local", "local:codex-local", "codex-bridge:old"]
     )
-    def test_legacy_desktop_sender_is_rejected(self, client, sender_id):
+    def test_non_desktop_participant_prefixes_are_not_reserved(
+        self, client, tmp_path, sender_id
+    ):
         mock_inbox = MagicMock()
         mock_inbox.push = AsyncMock()
+        communication = CommunicateTool(str(tmp_path / "outbox"))
+        communication.set_inbound_handler(mock_inbox.push)
         mock_agent = MagicMock()
         mock_brain = MagicMock()
-        setup_routes(mock_inbox, mock_agent, mock_brain)
+        setup_routes(
+            mock_inbox,
+            mock_agent,
+            mock_brain,
+            communication=communication,
+        )
 
         resp = client.post(
             "/messages",
@@ -235,8 +244,10 @@ class TestPostMessages:
             },
         )
 
-        assert resp.status_code == 422
-        mock_inbox.push.assert_not_awaited()
+        assert resp.status_code == 200
+        event = mock_inbox.push.call_args.args[0]
+        assert event.participant_id == sender_id
+        assert event.content == "done"
 
     def test_attachment_filename_is_sanitized(self, client, tmp_path, monkeypatch):
         compact_id_with_separator = "abcde_fghijk"
@@ -637,14 +648,15 @@ class TestConnectionRejection:
         assert "data: 连接被拒绝" in resp.text
         assert "先到先得" in resp.text
 
-    def test_legacy_codex_bridge_connections_are_rejected(self, client):
-        with pytest.raises(WebSocketDisconnect) as exc:
-            with client.websocket_connect("/ws/codex-bridge:old") as socket:
-                socket.receive_text()
-        assert exc.value.code == 1008
+    def test_codex_bridge_name_has_no_special_sse_rejection(self, client, tmp_path):
+        comm = CommunicateTool(str(tmp_path))
+        assert comm.register_ws("codex-bridge:old", asyncio.Queue()) is True
+        api_app.setup_ws(MagicMock(), comm)
 
         response = client.get("/sse/codex-bridge:old")
-        assert response.status_code == 410
+
+        assert response.status_code == 200
+        assert response.headers["x-connection-rejected"] == "duplicate-participant"
 
     def test_websocket_rejects_messages_while_agent_is_not_ready(self, client):
         api_app.setup_ws(None, None)
@@ -657,15 +669,15 @@ class TestConnectionRejection:
 
 
 class TestCommunicateRegistrationAPI:
-    def test_legacy_codex_bridge_registration_is_rejected(self, client, tmp_path):
+    def test_non_desktop_registration_kind_is_rejected(self, client, tmp_path):
         comm = CommunicateTool(str(tmp_path / "outbox"))
         api_app.setup_ws(MagicMock(), comm)
 
         response = client.post(
             "/api/communicate/register",
             json={
-                "kind": "codex-bridge",
-                "client_id": "codex-local:cw_default",
+                "kind": "other-client",
+                "client_id": "client-1",
                 "metadata": {"protocol_versions": [1]},
             },
         )

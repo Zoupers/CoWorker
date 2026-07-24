@@ -752,9 +752,6 @@ async def export_config(authorization: str | None = Header(default=None)):
 
 @app.websocket("/ws/{participant_id}")
 async def websocket_endpoint(ws: WebSocket, participant_id: str):
-    if participant_id.startswith("codex-bridge:"):
-        await ws.close(code=1008, reason="codex-bridge protocol is no longer supported")
-        return
     if participant_id.startswith("coworker-desktop:"):
         try:
             verify_communication_authorization(ws.headers.get("authorization"))
@@ -808,8 +805,6 @@ async def sse_endpoint(
 ):
     """SSE 出站通道：与 WS 共用 CommunicateTool 的出站队列注册表，故 communicate
     工具投递逻辑零改动。入站方向用现有 POST /messages。EventSource 原生自动重连。"""
-    if participant_id.startswith("codex-bridge:"):
-        raise HTTPException(status_code=410, detail=tr("api.desktop.legacy_bridge_removed"))
     if participant_id.startswith("coworker-desktop:"):
         verify_communication_authorization(authorization)
     queue: asyncio.Queue = asyncio.Queue()

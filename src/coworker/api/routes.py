@@ -166,11 +166,6 @@ def _model_config_response() -> dict:
 async def post_message(message: MessagePayload, authorization: str | None = Header(default=None)):
     if _inbox is None:
         raise HTTPException(status_code=503, detail=tr("api.state.agent_not_ready"))
-    if message.sender_id.startswith(("codex:", "local:", "codex-bridge:")):
-        raise HTTPException(
-            status_code=422,
-            detail=tr("api.message.legacy_bridge_unsupported"),
-        )
     is_desktop = (
         message.sender_id.startswith("coworker-desktop:")
         or message.message_id is not None
