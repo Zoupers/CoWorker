@@ -50,6 +50,7 @@ struct AppState {
     log_stream: tokio::sync::Mutex<Option<RunningLogStream>>,
     pending_update: std::sync::Mutex<Option<Update>>,
     quitting: AtomicBool,
+    close_to_tray: AtomicBool,
 }
 
 struct RunningLogStream {
@@ -844,6 +845,7 @@ pub fn run() {
             log_stream: tokio::sync::Mutex::new(None),
             pending_update: std::sync::Mutex::new(None),
             quitting: AtomicBool::new(false),
+            close_to_tray: AtomicBool::new(true),
         })
         .setup(|app| {
             let default_names = default_codex_names();
@@ -890,7 +892,8 @@ pub fn run() {
             check_desktop_update,
             get_default_desktop_update_url,
             install_desktop_update,
-            set_tray_copy
+            set_tray_copy,
+            set_close_to_tray
         ])
         .build(tauri::generate_context!())
         .expect("error while building CoWorker Desktop app");
@@ -975,6 +978,11 @@ fn set_tray_copy(
     let menu = build_tray_menu(&app, &open, &hide, &quit).map_err(to_message)?;
     tray.set_tooltip(Some(tooltip)).map_err(to_message)?;
     tray.set_menu(Some(menu)).map_err(to_message)
+}
+
+#[tauri::command]
+fn set_close_to_tray(enabled: bool, state: tauri::State<'_, AppState>) {
+    state.close_to_tray.store(enabled, Ordering::SeqCst);
 }
 
 fn window_state_flags() -> StateFlags {
@@ -1127,9 +1135,14 @@ fn install_window_close_behavior(app: &mut tauri::App) -> tauri::Result<()> {
                 );
                 return;
             }
-            desktop_log_info("CoWorker Desktop main window close requested; hiding to tray");
             api.prevent_close();
-            let _ = window_for_events.hide();
+            if state.close_to_tray.load(Ordering::SeqCst) {
+                desktop_log_info("CoWorker Desktop main window close requested; hiding to tray");
+                let _ = window_for_events.hide();
+            } else {
+                desktop_log_info("CoWorker Desktop main window close requested; shutting down");
+                request_desktop_shutdown(&app_handle);
+            }
         }
         _ => {}
     });

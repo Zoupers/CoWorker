@@ -62,6 +62,7 @@ vi.mock("./tauri", () => ({
   listenBridgeLogChunks: vi.fn(),
   startBridgeLogStream: vi.fn(),
   stopBridgeLogStream: vi.fn(),
+  setCloseToTray: vi.fn(),
   setTrayCopy: vi.fn(),
 }));
 
@@ -184,6 +185,7 @@ function setDefaultMocks(status: BridgeStatus = stoppedStatus, config: ConfigVal
   vi.mocked(tauri.listenBridgeLogChunks).mockResolvedValue(vi.fn());
   vi.mocked(tauri.startBridgeLogStream).mockResolvedValue(undefined);
   vi.mocked(tauri.stopBridgeLogStream).mockResolvedValue(undefined);
+  vi.mocked(tauri.setCloseToTray).mockResolvedValue(undefined);
   vi.mocked(tauri.setTrayCopy).mockResolvedValue(undefined);
   vi.mocked(openDialog).mockResolvedValue(null);
   vi.mocked(saveDialog).mockResolvedValue(null);
@@ -264,6 +266,44 @@ describe("App backend operation wiring", () => {
       quit: "退出",
     }));
     window.localStorage.setItem("coworker-desktop-lang", "en");
+  });
+
+  it("lets closing the main window exit instead of always hiding to the tray", async () => {
+    const user = await renderApp();
+    await waitFor(() => expect(tauri.setCloseToTray).toHaveBeenCalledWith(true));
+    await openConfig(user);
+
+    await user.click(inputById("close-to-tray"));
+
+    await waitFor(() => expect(tauri.setCloseToTray).toHaveBeenLastCalledWith(false));
+  });
+
+  it("reorders connection profiles", async () => {
+    const user = await renderApp();
+    await openConfig(user);
+    await user.click(screen.getByRole("tab", { name: "Partner Two" }));
+
+    await user.click(screen.getByRole("button", { name: "Move selected profile earlier" }));
+
+    const tabs = within(screen.getByRole("tablist", { name: "Connection profiles" })).getAllByRole("tab");
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["Partner Two", "Partner One"]);
+  });
+
+  it("sends a native notification for an incoming local message", async () => {
+    await renderApp(runningStatus);
+    vi.mocked(sendNotification).mockClear();
+
+    act(() => actorStreamHandlers.forEach((handler) => handler({
+      actor_id: "local",
+      conversation_id: "local-thread",
+      message_id: "incoming-local-1",
+      event: { type: "conversation_updated" },
+    })));
+
+    await waitFor(() => expect(sendNotification).toHaveBeenCalledWith({
+      title: "New Local message",
+      body: "Open CoWorker Desktop to view the conversation.",
+    }));
   });
 
   it("refreshes approvals from lifecycle events without polling", async () => {
@@ -735,6 +775,18 @@ describe("App backend operation wiring", () => {
     await waitFor(() => expect(tauri.copyDesktopAttachment).toHaveBeenCalledWith("D:\\tmp\\summary.md", "D:\\downloads\\summary.md"));
   });
 
+  it("copies and quotes conversation messages", async () => {
+    const user = await renderApp(runningStatus);
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    await openSessions(user);
+
+    await user.click(await screen.findByRole("button", { name: "Copy message" }));
+    expect(writeText).toHaveBeenCalledWith("Ready");
+
+    await user.click(screen.getByRole("button", { name: "Quote message" }));
+    expect(screen.getByLabelText("Session message")).toHaveValue("> Ready\n\n");
+  });
+
   it("adds dropped files to the active session composer", async () => {
     const user = await renderApp(runningStatus);
     await openSessions(user);
@@ -946,6 +998,8 @@ describe("App backend operation wiring", () => {
 
     expect(await screen.findByText("Ready")).toBeInTheDocument();
     expect(screen.getByText("history available")).toBeInTheDocument();
+    expect(screen.getByText("History remains available offline. Start the Bridge to continue this conversation.")).toBeInTheDocument();
+    expect(screen.queryByText(/comes from local history/)).not.toBeInTheDocument();
     expect(screen.getByLabelText("Session message")).toBeDisabled();
     expect(screen.getByRole("button", { name: /New conversation/ })).toBeDisabled();
     expect(tauri.listDesktopConversations).toHaveBeenCalledWith("codex", "coworker_desktop.json", 120);

@@ -1,5 +1,5 @@
-import { ChevronUp, Download, FolderOpen, GripVertical, Lock, MessageSquare, Paperclip, Pencil, Plus, RefreshCw, Send, X } from "lucide-react";
-import { useLayoutEffect, useRef, type ReactNode, type RefObject, type UIEvent } from "react";
+import { Check, ChevronUp, Copy, Download, FolderOpen, GripVertical, Lock, MessageSquare, Paperclip, Pencil, Plus, Quote, RefreshCw, Send, X } from "lucide-react";
+import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject, type UIEvent } from "react";
 import { MessageIcon, MessageText, ToolResultDisclosure } from "../components/MessageParts";
 import { useI18n } from "../i18n";
 import type { DictKey } from "../i18n/en";
@@ -146,6 +146,7 @@ export function SessionsView({
 }) {
   const { t } = useI18n();
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const [copiedMessageId, setCopiedMessageId] = useState("");
   const resolvedModeOptions = modeOptions ?? [
     { value: "default", label: t("sessions.modeDefault") },
     { value: "plan", label: t("sessions.modePlan") },
@@ -164,6 +165,27 @@ export function SessionsView({
     if (!sessionCursor || messagesLoading) return;
     if (event.currentTarget.scrollTop <= loadEarlierScrollThreshold) {
       onLoadEarlierMessages();
+    }
+  }
+
+  function quoteMessage(text: string) {
+    const quoted = text
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => `> ${line}`)
+      .join("\n");
+    if (!quoted) return;
+    setComposerText(composerText ? `${composerText}\n\n${quoted}\n\n` : `${quoted}\n\n`);
+    window.requestAnimationFrame(() => composerRef.current?.focus());
+  }
+
+  async function copyMessage(messageId: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedMessageId(messageId);
+      window.setTimeout(() => setCopiedMessageId((current) => current === messageId ? "" : current), 1600);
+    } catch {
+      setCopiedMessageId("");
     }
   }
 
@@ -341,6 +363,25 @@ export function SessionsView({
                       {message.bubble && <code className="bubbleMessageId">{message.bubble.id}</code>}
                       <span>{formatSessionTime(message.timestamp)}</span>
                       {message.streaming && <em>streaming</em>}
+                      <span className="messageActions">
+                        <button
+                          onClick={() => void copyMessage(message.id, message.text)}
+                          title={t("sessions.copyMessage")}
+                          aria-label={t("sessions.copyMessage")}
+                          type="button"
+                        >
+                          {copiedMessageId === message.id ? <Check size={13} /> : <Copy size={13} />}
+                        </button>
+                        <button
+                          onClick={() => quoteMessage(message.text)}
+                          disabled={!canUseComposer || !message.text.trim()}
+                          title={t("sessions.quoteMessage")}
+                          aria-label={t("sessions.quoteMessage")}
+                          type="button"
+                        >
+                          <Quote size={13} />
+                        </button>
+                      </span>
                     </div>
                     <MessageText text={message.text} />
                     {result && <ToolResultDisclosure result={result} />}
@@ -388,7 +429,13 @@ export function SessionsView({
           {!canUseComposer && (
             <div className="readOnlyNotice" role="status">
               <Lock size={15} />
-              <span>{presentation?.readOnlyNotice ?? (selectedSession && !selectedSession.writable ? t("sessions.composerNotBridgeOwned") : t("sessions.composerBridgeNotRunning"))}</span>
+              <span>
+                {!bridgeRunning
+                  ? t("sessions.composerBridgeNotRunning")
+                  : selectedSession && !selectedSession.writable
+                    ? presentation?.readOnlyNotice ?? t("sessions.composerNotBridgeOwned")
+                    : t("sessions.composerBridgeNotRunning")}
+              </span>
             </div>
           )}
           {showAttachments && composerAttachments.length > 0 && (

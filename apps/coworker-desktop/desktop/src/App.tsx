@@ -74,6 +74,7 @@ import {
   ConfigValue,
   LogOutputLevel,
   BridgeStatus,
+  ActorStreamEvent,
   CommunicateRegistration,
   DesktopUpdateInfo,
   DiagnosticResult,
@@ -83,6 +84,7 @@ import {
   startBridgeLogStream,
   stopBridge,
   stopBridgeLogStream,
+  setCloseToTray,
   setTrayCopy,
 } from "./tauri";
 import { ConfigView } from "./views/ConfigView";
@@ -101,6 +103,26 @@ function readInitialLifePanelCollapsed() {
   } catch {
     return false;
   }
+}
+
+export function shouldNotifyActorEvent(
+  update: ActorStreamEvent,
+  notifiedIds: Set<string>,
+): boolean {
+  const eventType = String(update.event.type ?? "");
+  const message = update.event.message;
+  const authorKind = message && typeof message === "object" && !Array.isArray(message)
+    ? String((message as Record<string, unknown>).author_kind ?? "")
+    : "";
+  const isIncomingConversation = eventType === "conversation_updated"
+    && (update.actor_id === "local" || (authorKind !== "" && authorKind !== "local"));
+  const isClaudeResult = update.actor_id === "claude" && eventType === "result";
+  if (!isIncomingConversation && !isClaudeResult) return false;
+  const notificationId = update.message_id
+    ?? `${update.actor_id}:${update.conversation_id}:${eventType}`;
+  if (notifiedIds.has(notificationId)) return false;
+  notifiedIds.add(notificationId);
+  return true;
 }
 
 export function App() {
@@ -147,6 +169,7 @@ export function App() {
   const desktopUpdateCheckInFlightRef = useRef(false);
   const handledDesktopUpdatePushesRef = useRef(new Set<string>());
   const notifiedDesktopUpdateVersionsRef = useRef(new Set<string>());
+  const notifiedMessageIdsRef = useRef(new Set<string>());
   const toastIdRef = useRef(0);
   const toastTimersRef = useRef<Map<number, number>>(new Map());
   const savedConfigRef = useRef<ConfigValue>({});
@@ -291,6 +314,10 @@ export function App() {
       quit: t("tray.quit"),
     }).catch(() => undefined);
   }, [lang, t]);
+
+  useEffect(() => {
+    void setCloseToTray(config.close_to_tray !== false).catch(() => undefined);
+  }, [config.close_to_tray]);
 
   useEffect(() => {
     return () => {
@@ -519,6 +546,25 @@ export function App() {
   }, [bootstrapPhase, config.desktop_update_url, desktopUpdateUrlPlaceholder]);
 
   useEffect(() => {
+    if (bootstrapPhase !== "ready") return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    listenActorStreamEvents((update) => {
+      if (!shouldNotifyActorEvent(update, notifiedMessageIdsRef.current)) return;
+      notifyIncomingMessage(update.actor_id).catch(() => undefined);
+    })
+      .then((nextUnlisten) => {
+        if (disposed) nextUnlisten();
+        else unlisten = nextUnlisten;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [bootstrapPhase, lang]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
       getBridgeStatus().then(setStatus).catch(() => undefined);
     }, 3000);
@@ -718,6 +764,25 @@ export function App() {
     }
   }
 
+  async function notifyIncomingMessage(actorId: string) {
+    try {
+      const permissionGranted = await isPermissionGranted();
+      if (permissionGranted || (await requestPermission()) === "granted") {
+        const actor = actorId === "local"
+          ? t("actors.local")
+          : actorId === "claude"
+            ? t("actors.claude")
+            : t("actors.codex");
+        sendNotification({
+          title: t("messages.notification.title", { actor }),
+          body: t("messages.notification.body"),
+        });
+      }
+    } catch {
+      // Conversation updates remain visible in the app when native notifications fail.
+    }
+  }
+
   async function installUpdate() {
     if (!desktopUpdate) return;
     setDesktopUpdateState("downloading");
@@ -822,6 +887,20 @@ export function App() {
     });
     setConfig({ ...config, coworkers: nextCoworkers });
     if (field === "coworker_id") setSelectedCoworkerId(String(value ?? ""));
+    markDirty();
+  }
+
+  function moveSelectedCoworker(offset: -1 | 1) {
+    const nextIndex = selectedIndex + offset;
+    if (nextIndex < 0 || nextIndex >= coworkers.length) return;
+    const nextCoworkers = [...coworkers];
+    [nextCoworkers[selectedIndex], nextCoworkers[nextIndex]] = [
+      nextCoworkers[nextIndex],
+      nextCoworkers[selectedIndex],
+    ];
+    setConfig({ ...config, coworkers: nextCoworkers });
+    setSelectedCoworkerIndex(nextIndex);
+    setSelectedCoworkerId(nextCoworkers[nextIndex]?.coworker_id ?? "");
     markDirty();
   }
 
@@ -1197,6 +1276,7 @@ export function App() {
               setSelectedCoworkerId(coworkers[index]?.coworker_id ?? "");
             }}
             updateCoworker={updateCoworker}
+            onMoveSelectedCoworker={moveSelectedCoworker}
             onAddCoworker={addCoworker}
             onRemoveSelectedCoworker={removeSelectedCoworker}
             selectedRegistrations={selectedRegistrations}
