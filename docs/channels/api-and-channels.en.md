@@ -7,7 +7,7 @@
 > The current v0.x releases should be used only locally or on a trusted network. Read the
 > [security policy](../../SECURITY.md) before deployment.
 
-All outbound communication is routed by `ChannelRegistry` to the appropriate channel: the generic WS/SSE stream or WeCom. Coworker Desktop is a protocol profile on the Stream Runtime, sharing its registration, connection, queue, and lifecycle management while preserving the existing participant IDs and message protocol. `communicate` selects a target by full participant prefix or channel resolver, while `list_connections` aggregates participants that are currently online or otherwise known to be reachable across all channels. `/status` reports runtime, model, and usage state only; connection discovery is handled exclusively by `list_connections`.
+All outbound communication is first routed by `ChannelRegistry` to an independent transport such as Stream or WeCom. Within Stream, `StreamChannel` selects either generic WS/SSE behavior or the Desktop profile; the Registry does not understand Desktop participant prefixes. Coworker Desktop shares Stream Runtime registration, connections, queues, and lifecycle while preserving its existing participant IDs and message protocol. `list_connections` aggregates participants that are online or otherwise reachable across channels and profiles. `/status` reports runtime, model, and usage state only; connection discovery is handled exclusively by `list_connections`.
 
 ## Channel development model
 
@@ -16,7 +16,7 @@ All outbound communication is routed by `ChannelRegistry` to the appropriate cha
 - `registry`, which registers Channels, routes inbound and outbound traffic, and starts or stops each shared Runtime exactly once.
 - `stream_runtime`, which owns WS/SSE connections, participant registrations, attachment storage, and offline outbox delivery. `app.py` consumes these host capabilities directly rather than depending on `CommunicateTool`.
 
-To add a Channel, implement the `Channel` protocol and call `channel_system.registry.register(channel)`. A Channel owns participant resolution, raw inbound normalization, and outbound semantics; mutable connection state, background tasks, and lifecycle belong to its `runtime`. Multiple protocol profiles may share one Runtime, as Desktop and the generic Stream Channel share `StreamRuntime`. `CommunicateTool` is only the model-tool adapter for the Registry and no longer acts as a host, connection pool, or registration center.
+To add an independent transport, implement the `Channel` protocol and call `channel_system.registry.register(channel)`. A Channel owns participant resolution, raw inbound normalization, and outbound semantics; mutable connection state, background tasks, and lifecycle belong to its `runtime`. For new protocol behavior over Stream, implement `StreamProfile` and call `channel_system.register_stream_profile(profile)`. A profile owns its participant prefix, capabilities, inbound normalization, and outbound decoration while reusing `StreamRuntime`. Desktop is the built-in Stream profile. `CommunicateTool` is only the model-tool adapter for the Registry and no longer acts as a host, connection pool, or registration center.
 
 The smallest outbound Channel subclasses `BaseChannel` and implements only `send`. The defaults provide a no-op Runtime, no shorthand resolution, no inbound support, an empty connection list, and activity helpers:
 

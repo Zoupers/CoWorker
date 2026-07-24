@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from coworker.channels.registry import ChannelRegistry
-from coworker.channels.stream import StreamChannel, StreamRuntime
+from coworker.channels.stream import StreamChannel, StreamProfile, StreamRuntime
 
 
 @dataclass(frozen=True)
@@ -13,11 +13,20 @@ class ChannelSystem:
 
     registry: ChannelRegistry
     stream_runtime: StreamRuntime
+    _stream_channel: StreamChannel = field(repr=False)
+
+    def register_stream_profile(self, profile: StreamProfile) -> None:
+        self._stream_channel.register_profile(profile)
 
 
 def create_channel_system(outbox_dir: str | Path) -> ChannelSystem:
     outbox = Path(outbox_dir)
     stream = StreamRuntime(outbox, outbox.parent / "communicate_registrations.json")
     registry = ChannelRegistry()
-    registry.register(StreamChannel(stream))
-    return ChannelSystem(registry=registry, stream_runtime=stream)
+    stream_channel = StreamChannel(stream)
+    registry.register(stream_channel)
+    return ChannelSystem(
+        registry=registry,
+        stream_runtime=stream,
+        _stream_channel=stream_channel,
+    )

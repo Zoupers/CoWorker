@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from coworker.channels.desktop import DesktopRegistry
+from coworker.channels.stream.desktop import DesktopRegistry
 from coworker.memory.short_term import ShortTermMemory
 
 

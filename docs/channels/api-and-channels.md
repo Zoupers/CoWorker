@@ -7,7 +7,7 @@
 > 当前 v0.x 版本只应在本机或可信网络使用。部署前请阅读
 > [安全策略](../../SECURITY.zh-CN.md)。
 
-所有出站通信统一由 `ChannelRegistry` 路由到对应信道：通用 WS/SSE 流或企业微信。Coworker Desktop 作为 Stream Runtime 上的协议 profile，共享同一套注册、连接、队列与生命周期管理，同时保留现有 participant ID 和消息协议。`communicate` 按完整 participant 前缀或信道解析器选择目标；`list_connections` 聚合各信道当前在线或已知可达的通信对象。`/status` 只报告运行、模型与用量状态，连接发现统一通过 `list_connections` 完成。
+所有出站通信先由 `ChannelRegistry` 路由到独立传输信道，例如 Stream 或企业微信。进入 Stream 后，再由 `StreamChannel` 选择通用 WS/SSE 行为或 Desktop profile；Registry 不理解 Desktop participant 前缀。Coworker Desktop 共享 Stream Runtime 的注册、连接、队列与生命周期，同时保留现有 participant ID 和消息协议。`list_connections` 聚合各信道及 profile 当前在线或已知可达的通信对象。`/status` 只报告运行、模型与用量状态，连接发现统一通过 `list_connections` 完成。
 
 ## Channel 开发模型
 
@@ -16,7 +16,7 @@
 - `registry`：注册 Channel、路由 inbound/outbound，并确保共享 Runtime 只启动和停止一次。
 - `stream_runtime`：承接 WS/SSE 连接、participant 注册、附件存储和离线 outbox；`app.py` 只依赖这个宿主能力，不依赖 `CommunicateTool`。
 
-新增 Channel 时实现 `Channel` 协议并调用 `channel_system.registry.register(channel)` 即可。Channel 负责 participant 解析、原始入站归一化和出站语义；可变连接状态、后台任务及启停逻辑放在它的 `runtime`。多个协议 profile 可以共享同一个 Runtime，Desktop 就与通用 Stream Channel 共享 `StreamRuntime`。`CommunicateTool` 只是 Registry 的模型工具适配器，不再兼任宿主、连接池或注册中心。
+新增独立传输时实现 `Channel` 协议并调用 `channel_system.registry.register(channel)`。Channel 负责 participant 解析、原始入站归一化和出站语义；可变连接状态、后台任务及启停逻辑放在它的 `runtime`。如果只是 Stream 上的新协议行为，则实现 `StreamProfile` 并调用 `channel_system.register_stream_profile(profile)`；profile 负责自己的 participant 前缀、能力、入站归一化和出站修饰，但复用 `StreamRuntime`。Desktop 就是内置的 Stream profile。`CommunicateTool` 只是 Registry 的模型工具适配器，不再兼任宿主、连接池或注册中心。
 
 最小出站 Channel 只需继承 `BaseChannel` 并实现 `send`；默认已包含空 Runtime、无简写解析、无入站、无连接列表和 activity 辅助方法：
 

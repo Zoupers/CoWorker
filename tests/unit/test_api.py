@@ -15,8 +15,8 @@ from starlette.websockets import WebSocketDisconnect
 from coworker.api import app as api_app
 from coworker.api.routes import setup as setup_routes
 from coworker.brain.brain import Brain
-from coworker.channels.desktop import DesktopChannel, DesktopDispatcher, DesktopRegistry
 from coworker.channels.stream.connection_pool import ConnectionPool
+from coworker.channels.stream.desktop import DesktopDispatcher, DesktopProfile, DesktopRegistry
 from coworker.channels.stream.wire import serialize_outbound_message
 from coworker.channels.system import ChannelSystem, create_channel_system
 from coworker.core.config import APIConfig
@@ -36,12 +36,7 @@ def _communication_with_desktop(tmp_path, handler) -> ChannelSystem:
     communication = _channel_system(tmp_path, handler)
     registry = DesktopRegistry(ShortTermMemory(), tmp_path / "desktop_registry")
     dispatcher = DesktopDispatcher(registry)
-    sender = MagicMock()
-    sender.send = AsyncMock()
-    sender.runtime = communication.stream_runtime
-    communication.registry.register(
-        DesktopChannel(sender, registry, dispatcher, tmp_path / "attachments")
-    )
+    communication.register_stream_profile(DesktopProfile(registry, dispatcher))
     return communication
 
 

@@ -7,7 +7,7 @@ from typing import Any
 
 from loguru import logger
 
-from coworker.channels.desktop.detail_store import DetailStore, _safe
+from coworker.channels.stream.desktop.detail_store import DetailStore, _safe
 from coworker.i18n import tr
 from coworker.memory.short_term import ShortTermMemory
 

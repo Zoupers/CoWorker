@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from coworker.channels.base import (
@@ -11,6 +13,7 @@ from coworker.channels.base import (
     ParticipantIdResolutionError,
 )
 from coworker.channels.registry import ChannelRegistry
+from coworker.channels.system import create_channel_system
 from coworker.core.types import CommunicateRequest, ToolResult
 
 
@@ -96,6 +99,37 @@ class _FailingRuntimeChannel(_MinimalChannel):
         pass
 
 
+class _FakeStreamProfile:
+    name = "profile"
+    participant_prefix = "profile:"
+
+    def __init__(self) -> None:
+        self.sent: list[CommunicateRequest] = []
+
+    def capabilities_for(self, participant_id: str) -> ChannelCapabilities:
+        return ChannelCapabilities(conversation_id=True, attachments=True, extra=True)
+
+    async def send(self, request, runtime) -> ToolResult:
+        self.sent.append(request)
+        return ToolResult(tool_call_id="", content="profile sent")
+
+    def normalize_inbound(self, envelope, runtime):
+        raise NotImplementedError
+
+    def list_connections(self, runtime) -> list[ConnectionInfo]:
+        sent_at, received_at = runtime.activity_for("profile:alice")
+        return [
+            ConnectionInfo(
+                participant_id="profile:alice",
+                channel=self.name,
+                kind="profile:test",
+                active=True,
+                last_sent_at=sent_at,
+                last_received_at=received_at,
+            )
+        ]
+
+
 @pytest.fixture()
 def registry() -> ChannelRegistry:
     return ChannelRegistry()
@@ -135,6 +169,39 @@ async def test_base_channel_from_sender_is_minimal_registration_path(
 
     assert not result.is_error
     assert requests[0].message == "hello"
+
+
+@pytest.mark.asyncio
+async def test_stream_profile_owns_prefixed_outbound_and_connection_view(tmp_path) -> None:
+    channels = create_channel_system(tmp_path / "outbox")
+    profile = _FakeStreamProfile()
+    channels.register_stream_profile(profile)
+    queue: asyncio.Queue = asyncio.Queue()
+    channels.stream_runtime.register_session("profile:alice", queue)
+
+    result = await channels.registry.send(
+        CommunicateRequest(
+            participant_id="profile:alice",
+            message="hello",
+            extra={"mode": "profile"},
+        )
+    )
+    connections = channels.registry.list_connections()
+
+    assert result.content == "profile sent"
+    assert profile.sent[0].extra == {"mode": "profile"}
+    assert queue.empty()
+    assert [(item.participant_id, item.channel) for item in connections] == [
+        ("profile:alice", "profile")
+    ]
+
+
+def test_stream_profile_rejects_duplicate_name_and_prefix(tmp_path) -> None:
+    channels = create_channel_system(tmp_path / "outbox")
+    channels.register_stream_profile(_FakeStreamProfile())
+
+    with pytest.raises(ValueError, match="profile name already registered"):
+        channels.register_stream_profile(_FakeStreamProfile())
 
 
 @pytest.mark.asyncio

@@ -217,6 +217,9 @@ class StreamRuntime:
     def record_received(self, participant_id: str) -> None:
         self._last_received_at[participant_id] = _activity_timestamp()
 
+    def record_sent(self, participant_id: str) -> None:
+        self._last_sent_at[participant_id] = _activity_timestamp()
+
     def activity_for(self, participant_id: str) -> tuple[str | None, str | None]:
         return self._last_sent_at.get(participant_id), self._last_received_at.get(participant_id)
 

@@ -29,10 +29,9 @@ from coworker.api.admin import setup_admin
 from coworker.api.routes import setup as setup_routes
 from coworker.brain.brain import Brain
 from coworker.brain.factory import build_provider
-from coworker.channels.desktop import (
-    DesktopChannel,
-    DesktopCommunicateSender,
+from coworker.channels.stream.desktop import (
     DesktopDispatcher,
+    DesktopProfile,
     DesktopRegistry,
 )
 from coworker.channels.system import create_channel_system
@@ -888,13 +887,10 @@ async def _main() -> bool:
     api_app.set_collector(event_collector)
 
     if not setup_required:
-        desktop_sender = DesktopCommunicateSender(channel_system.stream_runtime)
-        channel_system.registry.register(
-            DesktopChannel(
-                desktop_sender,
+        channel_system.register_stream_profile(
+            DesktopProfile(
                 desktop_registry,
                 desktop_dispatcher,
-                Path(config.agent.inbox_dir).parent / "attachments",
             )
         )
 

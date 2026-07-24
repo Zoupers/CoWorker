@@ -1422,12 +1422,11 @@ class TestCommunicateToolCheckers:
 
     @pytest.mark.asyncio
     async def test_desktop_sender_delivers_online_without_retry_queue(self, tmp_path):
-        from coworker.channels.desktop import DESKTOP_PREFIX, DesktopCommunicateSender
+        from coworker.channels.stream.desktop import DesktopProfile
 
         channel_system = create_channel_system(tmp_path / "outbox")
         tool = CommunicateTool(channel_system.registry)
-        sender = DesktopCommunicateSender(channel_system.stream_runtime)
-        channel_system.registry.register(BaseChannel.from_sender(DESKTOP_PREFIX, sender.send))
+        channel_system.register_stream_profile(DesktopProfile(MagicMock(), MagicMock()))
         queue: asyncio.Queue = asyncio.Queue()
         participant_id = "coworker-desktop:desk-1:claude:cw-1:abcd1234"
         assert channel_system.stream_runtime.register_session(participant_id, queue) is True
