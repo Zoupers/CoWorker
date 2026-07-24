@@ -16,6 +16,7 @@ from coworker.channels.registry import ChannelRegistry
 from coworker.channels.stream import StreamProfile
 from coworker.channels.system import create_channel_system
 from coworker.core.types import CommunicateRequest, ToolResult
+from coworker.i18n import locale_context
 
 
 class _FakeChannel(BaseChannel):
@@ -135,6 +136,22 @@ class _FakeStreamProfile(StreamProfile):
                 last_received_at=received_at,
             )
         ]
+
+
+async def test_missing_channel_returns_actionable_localized_error() -> None:
+    registry = ChannelRegistry()
+    request = CommunicateRequest(participant_id="missing:alice", message="hello")
+
+    result = await registry.send(request)
+    with locale_context("en"):
+        result_en = await registry.send(request)
+
+    assert result.is_error
+    assert "participant_id='missing:alice'" in result.content
+    assert "list_connections" in result.content
+    assert result_en.is_error
+    assert "No channel can handle" in result_en.content
+    assert "participant_id='missing:alice'" in result_en.content
 
 
 class _BrokenRegistration:

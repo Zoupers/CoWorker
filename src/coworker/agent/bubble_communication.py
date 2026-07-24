@@ -135,7 +135,6 @@ class BubbleCommunicateTool(CommunicateTool):
         )
         return tr(
             "tool_result.communicate.bound_invalid",
-            count=len(issues),
             issues="\n".join(f"- {issue}" for issue in issues),
             participant=bubble.participant_id,
             conversation=conversation,

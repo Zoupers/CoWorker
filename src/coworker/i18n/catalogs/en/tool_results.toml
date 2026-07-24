@@ -122,7 +122,7 @@ total = "About {{tokens}} tokens total"
 bound_participant = "This bubble can message only its bound participant; participant_id cannot be changed."
 bound_conversation = "This bubble can message only its bound conversation_id."
 bound_target_conversation = ", conversation_id='{{conversation}}'"
-bound_invalid = '''Bubble communicate arguments have {{count}} issues:
+bound_invalid = '''Bubble communicate arguments are invalid:
 {{issues}}
 Current fixed target: participant_id='{{participant}}'{{conversation}}'''
 attachment_fallback = "{{prefix}} (attachment)"
@@ -137,6 +137,7 @@ message_empty = "message must not be empty."
 fallback_saved = "No live connection was available; message was recorded in the local file: {{path}}"
 failed = "Message delivery failed: {{error}}"
 no_connections = "There are no connections or known contacts."
+no_channel = "No channel can handle participant_id='{{participant}}'. Use list_connections and copy a complete available ID."
 connection_activity = "last sent: {{sent}}, last received: {{received}}"
 connection_none = "none"
 connection_line = "  - {{participant}} ({{activity}}){{display_name}}"

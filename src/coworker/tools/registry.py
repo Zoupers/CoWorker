@@ -74,27 +74,27 @@ class ToolRegistry:
         self,
         scope,
         *,
-        overrides: Iterable[Tool] = (),
+        replacements: Iterable[Tool] = (),
     ) -> ToolRegistry:
         """Return a new registry where each tool is forked with the given scope.
 
-        Same-named overrides replace scoped tools without changing their schema
+        Same-named replacements replace scoped tools without changing their schema
         contract. Intercepts are preserved.
         """
-        override_entries = ToolRegistry()._validated_entries(
-            tuple(overrides),
-            subject="tool overrides",
+        replacement_entries = ToolRegistry()._validated_entries(
+            tuple(replacements),
+            subject="tool replacements",
         )
-        override_by_name = dict(override_entries)
-        unknown = [name for name in override_by_name if name not in self._tools]
-        if unknown:
+        replacement_by_name = dict(replacement_entries)
+        issues = self._replacement_issues(replacement_by_name)
+        if issues:
             raise RegistrationError(
-                "tool overrides",
-                [f"tool {name!r} is not registered" for name in unknown],
+                "tool replacements",
+                issues,
             )
         r = ToolRegistry(intercepts=self._intercepts)
         r.register_many(
-            override_by_name.get(name, tool.fork(scope))
+            replacement_by_name.get(name, tool.fork(scope))
             for name, tool in self._tools.items()
         )
         return r
@@ -151,3 +151,18 @@ class ToolRegistry:
         for name, tool in entries:
             self._tools[name] = tool
             logger.debug(f"Registered tool: {name}")
+
+    def _replacement_issues(
+        self,
+        replacements: dict[str, Tool],
+    ) -> list[str]:
+        issues: list[str] = []
+        for name, replacement in replacements.items():
+            original = self._tools.get(name)
+            if original is None:
+                issues.append(f"tool {name!r} is not registered")
+            elif replacement.definition != original.definition:
+                issues.append(
+                    f"tool {name!r} replacement must preserve its ToolDefinition exactly"
+                )
+        return issues

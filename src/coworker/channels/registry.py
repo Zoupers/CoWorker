@@ -79,7 +79,7 @@ class ChannelRegistry:
         if target is None:
             return ToolResult(
                 tool_call_id="",
-                content=tr("tool_result.communicate.failed", error="no channel registered"),
+                content=tr("tool_result.communicate.no_channel", participant=request.participant_id),
                 is_error=True,
             )
         outbound, omitted = target.capabilities_for(canonical).filter(

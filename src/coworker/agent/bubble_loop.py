@@ -239,12 +239,15 @@ class BubbleMiniLoop:
             brain=bubble.brain,
             short_term=self._stm,
         )
-        overrides = (
+        replacements = (
             [self._bubble_communicate_tool]
             if self._bubble_communicate_tool is not None
             else []
         )
-        scoped_tools = self._tools.scoped(self._scope, overrides=overrides)
+        scoped_tools = self._tools.scoped(
+            self._scope,
+            replacements=replacements,
+        )
         intercepts = self._tool_intercepts()
         if intercepts:
             scoped_tools = scoped_tools.intercept(intercepts)

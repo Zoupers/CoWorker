@@ -162,20 +162,39 @@ class TestToolRegistry:
         registry.register(TextModelOnlyTool())
         assert registry.get_schemas() == []
 
-    def test_scoped_override_preserves_source_registry(self):
+    def test_scoped_replacement_preserves_source_registry(self):
         registry = ToolRegistry()
         original = EchoTool()
         replacement = EchoTool()
         registry.register(original)
 
-        scoped = registry.scoped(scope=None, overrides=[replacement])
+        scoped = registry.scoped(scope=None, replacements=[replacement])
 
         assert registry._tools["echo"] is original
         assert scoped._tools["echo"] is replacement
 
-    def test_scoped_override_reports_missing_tool(self):
-        with pytest.raises(ValueError, match="'echo' is not registered"):
-            ToolRegistry().scoped(scope=None, overrides=[EchoTool()])
+    def test_scoped_replacements_report_all_contract_issues(self):
+        class ChangedEchoTool(EchoTool):
+            @property
+            def definition(self) -> ToolDefinition:
+                return ToolDefinition(
+                    name="echo",
+                    description="changed",
+                    parameters={},
+                )
+
+        registry = ToolRegistry()
+        registry.register(EchoTool())
+
+        with pytest.raises(ValueError) as error:
+            registry.scoped(
+                scope=None,
+                replacements=[ChangedEchoTool(), TextModelOnlyTool()],
+            )
+
+        message = str(error.value)
+        assert "preserve its ToolDefinition exactly" in message
+        assert "tool 'vision_only' is not registered" in message
 
     @pytest.mark.asyncio
     async def test_execute_success(self):

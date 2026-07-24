@@ -2472,13 +2472,13 @@ class TestToolForkBubbleScope:
 
         assert not result.is_error
         assert rejected.is_error
-        assert "3 个问题" in rejected.content
+        assert "存在以下问题" in rejected.content
         assert "不能改用其他 participant_id" in rejected.content
         assert "只能向已绑定的 conversation_id" in rejected.content
         assert "extra 必须是对象" in rejected.content
         assert "participant_id='wecom:alice', conversation_id='conv-1'" in rejected.content
         assert rejected_en.is_error
-        assert "3 issues" in rejected_en.content
+        assert "arguments are invalid" in rejected_en.content
         assert "participant_id='wecom:alice', conversation_id='conv-1'" in rejected_en.content
         assert bubble_tool.definition.to_schema() == tool.definition.to_schema()
         assert seen == [
