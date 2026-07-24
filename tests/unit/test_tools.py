@@ -162,6 +162,21 @@ class TestToolRegistry:
         registry.register(TextModelOnlyTool())
         assert registry.get_schemas() == []
 
+    def test_scoped_override_preserves_source_registry(self):
+        registry = ToolRegistry()
+        original = EchoTool()
+        replacement = EchoTool()
+        registry.register(original)
+
+        scoped = registry.scoped(scope=None, overrides=[replacement])
+
+        assert registry._tools["echo"] is original
+        assert scoped._tools["echo"] is replacement
+
+    def test_scoped_override_reports_missing_tool(self):
+        with pytest.raises(ValueError, match="'echo' is not registered"):
+            ToolRegistry().scoped(scope=None, overrides=[EchoTool()])
+
     @pytest.mark.asyncio
     async def test_execute_success(self):
         registry = ToolRegistry()

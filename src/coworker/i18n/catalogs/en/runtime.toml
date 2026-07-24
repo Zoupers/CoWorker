@@ -180,8 +180,8 @@ intercept_restart = "This tool restarts the parent thread and is unavailable ins
 intercept_clear = "This tool compresses the parent thread's short-term memory and is unavailable inside a bubble."
 intercept_compress = "This tool compresses the parent thread's memory and is unavailable inside a bubble."
 intercept_communicate = "This bubble is not bound to a participant and cannot communicate externally. Ask the parent thread for help with bubble_send(target='main', message=...)."
-bound_conversation = ", conversation {{conversation}}"
-bound = '''- This bubble is bound to participant {{participant}}{{conversation}}. New messages from that participant are routed directly to you. Reply with communicate(message=...), which is fixed to that participant; do not use it to contact anyone else.
+bound_conversation = ", conversation_id='{{conversation}}'"
+bound = '''- This bubble is bound to an external participant. New messages from that participant are routed directly to you. Reply with communicate(participant_id='{{participant}}'{{conversation}}, message=...). Copy these fixed IDs exactly and do not contact anyone else.
 '''
 handoff_transparency = '''- The system announces takeover only before the first inbound message or direct reply. It sends the matching completion notice only after a takeover notice was delivered. Direct replies are labeled automatically; do not repeat these notices.
 '''

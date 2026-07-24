@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from coworker.agent.bubble import Bubble, BubbleStore
-from coworker.agent.bubble_communication import BubbleCommunicator
+from coworker.agent.bubble_communication import BubbleCommunicateTool
 from coworker.agent.bubble_handoff import BubbleHandoffMatcher, BubbleHandoffNotifier
 from coworker.agent.bubble_loop import BubbleMiniLoop, _build_merge_message
 from coworker.agent.usage_stats import UsageStatsCollector
@@ -719,7 +719,10 @@ class TestBubbleMiniLoop:
         assert "communicate" not in loop._tool_intercepts()
         identity = loop._build_identity_content(b)
         assert "wecom:alice" in identity
-        assert "communicate(message=...)" in identity
+        assert (
+            "communicate(participant_id='wecom:alice', "
+            "conversation_id='conv-1', message=...)"
+        ) in identity
 
     async def test_participant_bound_bubble_sends_direct_reply_only_to_its_binding(
         self, store, messages, mock_brain, mock_inbox, tmp_path
@@ -2445,24 +2448,21 @@ class TestToolForkBubbleScope:
             participant_id="wecom:alice",
             conversation_id="conv-1",
         )
-        bubble_communicator = BubbleCommunicator(
+        bubble_tool = BubbleCommunicateTool.from_tool(
             tool,
             bubble,
             BubbleHandoffNotifier(tool),
         )
-        original_schema = tool.definition.to_schema()
-        adapted_schema = bubble_communicator.adapt_schemas([original_schema])[0]
 
-        result = await bubble_communicator.send(message="已处理")
-        rejected = await bubble_communicator.send(
+        result = await bubble_tool.execute(message="已处理")
+        rejected = await bubble_tool.execute(
             participant_id="wecom:bob",
             message="不应发送",
         )
 
         assert not result.is_error
         assert rejected.is_error
-        assert "participant_id" in original_schema["parameters"]["required"]
-        assert "participant_id" not in adapted_schema["parameters"]["required"]
+        assert bubble_tool.definition.to_schema() == tool.definition.to_schema()
         assert seen == [
             CommunicateRequest(
                 participant_id="wecom:alice",

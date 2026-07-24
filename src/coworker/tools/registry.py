@@ -70,14 +70,33 @@ class ToolRegistry:
                 is_error=True,
             )
 
-    def scoped(self, scope) -> ToolRegistry:
+    def scoped(
+        self,
+        scope,
+        *,
+        overrides: Iterable[Tool] = (),
+    ) -> ToolRegistry:
         """Return a new registry where each tool is forked with the given scope.
 
-        Intercepts are carried over so scoping does not drop the interception layer.
+        Same-named overrides replace scoped tools without changing their schema
+        contract. Intercepts are preserved.
         """
+        override_entries = ToolRegistry()._validated_entries(
+            tuple(overrides),
+            subject="tool overrides",
+        )
+        override_by_name = dict(override_entries)
+        unknown = [name for name in override_by_name if name not in self._tools]
+        if unknown:
+            raise RegistrationError(
+                "tool overrides",
+                [f"tool {name!r} is not registered" for name in unknown],
+            )
         r = ToolRegistry(intercepts=self._intercepts)
-        for tool in self._tools.values():
-            r.register(tool.fork(scope))
+        r.register_many(
+            override_by_name.get(name, tool.fork(scope))
+            for name, tool in self._tools.items()
+        )
         return r
 
     def list_names(self) -> list[str]:

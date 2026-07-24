@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from coworker.agent.bubble_communication import BubbleCommunicator
+from coworker.agent.bubble_communication import BubbleCommunicateTool
 from coworker.agent.bubble_handoff import BubbleHandoffNotifier
 from coworker.agent.incoming_content import build_content_blocks
 from coworker.core.types import IncomingEvent, Message, SummaryResult
@@ -74,8 +74,8 @@ class BubbleMiniLoop:
         self._long_term = long_term
         self._communicate = communicate
         self._handoff_notifier = BubbleHandoffNotifier(communicate)
-        self._bubble_communicator = (
-            BubbleCommunicator(communicate, bubble, self._handoff_notifier)
+        self._bubble_communicate_tool = (
+            BubbleCommunicateTool.from_tool(communicate, bubble, self._handoff_notifier)
             if communicate is not None and bubble.participant_id
             else None
         )
@@ -239,7 +239,12 @@ class BubbleMiniLoop:
             brain=bubble.brain,
             short_term=self._stm,
         )
-        scoped_tools = self._tools.scoped(self._scope)
+        overrides = (
+            [self._bubble_communicate_tool]
+            if self._bubble_communicate_tool is not None
+            else []
+        )
+        scoped_tools = self._tools.scoped(self._scope, overrides=overrides)
         intercepts = self._tool_intercepts()
         if intercepts:
             scoped_tools = scoped_tools.intercept(intercepts)
@@ -258,8 +263,6 @@ class BubbleMiniLoop:
             tool_schemas = scoped_tools.get_schemas(
                 model_has_vision=self._brain.current_model_has_vision
             )
-            if self._bubble_communicator is not None:
-                tool_schemas = self._bubble_communicator.adapt_schemas(tool_schemas)
 
             if self._ilog:
                 self._ilog.log_thinking_start(cycle, thinking=bool(self._brain.thinking))
@@ -413,10 +416,6 @@ class BubbleMiniLoop:
                 content = await self._handle_send(
                     tc.arguments.get("target", ""), tc.arguments.get("message", "")
                 )
-            elif tc.name == "communicate" and self._bubble_communicator is not None:
-                result = await self._bubble_communicator.send(**tc.arguments)
-                content = result.content if isinstance(result.content, str) else str(result.content)
-                is_error = result.is_error
             else:
                 result = await scoped_tools.execute(tc)
                 content = result.content if isinstance(result.content, str) else str(result.content)

@@ -9,39 +9,36 @@ from coworker.agent.bubble_handoff import (
 )
 from coworker.core.types import ToolResult
 from coworker.i18n import tr
+from coworker.tools.communicate_tool import CommunicateTool
 
 if TYPE_CHECKING:
     from coworker.agent.bubble import Bubble
-    from coworker.tools.communicate_tool import CommunicateTool
+    from coworker.channels.registry import ChannelRegistry
 
 
-class BubbleCommunicator:
-    """Apply Bubble binding and lifecycle rules to the shared communicate tool."""
+class BubbleCommunicateTool(CommunicateTool):
+    """CommunicateTool with one Bubble's fixed target and lifecycle semantics."""
 
     def __init__(
         self,
-        delegate: CommunicateTool,
+        channels: ChannelRegistry,
         bubble: Bubble,
         notifier: BubbleHandoffNotifier,
     ) -> None:
-        self._delegate = delegate
+        super().__init__(channels)
         self._bubble = bubble
         self._notifier = notifier
 
-    def adapt_schemas(self, schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        adapted: list[dict[str, Any]] = []
-        for schema in schemas:
-            if schema.get("name") != self._delegate.definition.name:
-                adapted.append(schema)
-                continue
-            parameters = dict(schema["parameters"])
-            parameters["required"] = [
-                name for name in parameters.get("required", []) if name != "participant_id"
-            ]
-            adapted.append({**schema, "parameters": parameters})
-        return adapted
+    @classmethod
+    def from_tool(
+        cls,
+        tool: CommunicateTool,
+        bubble: Bubble,
+        notifier: BubbleHandoffNotifier,
+    ) -> BubbleCommunicateTool:
+        return cls(tool._channels, bubble, notifier)
 
-    async def send(
+    async def execute(
         self,
         participant_id: str = "",
         message: str = "",
@@ -89,7 +86,7 @@ class BubbleCommunicator:
                         prefix=prefix,
                     )
             provenance = bubble_reply_message_extra(bubble.id)
-            if self._delegate.supports_message_extra(
+            if self.supports_message_extra(
                 bubble.participant_id,
                 provenance,
             ):
@@ -98,7 +95,7 @@ class BubbleCommunicator:
                 bubble,
                 resumed=bubble.resume_count > 0,
             )
-        return await self._delegate.execute(
+        return await super().execute(
             participant_id=bubble.participant_id,
             message=outgoing_message,
             conversation_id=bubble.conversation_id or requested_conversation or None,
