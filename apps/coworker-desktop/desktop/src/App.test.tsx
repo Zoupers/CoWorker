@@ -787,6 +787,29 @@ describe("App backend operation wiring", () => {
     expect(screen.getByLabelText("Session message")).toHaveValue("> Ready\n\n");
   });
 
+  it("localizes empty Codex responses in the conversation", async () => {
+    const user = await renderApp(runningStatus);
+    vi.mocked(tauri.loadDesktopMessages).mockResolvedValue({
+      messages: [{
+        ...assistantMessage,
+        id: "empty-response",
+        author_kind: "system",
+        content: "",
+        metadata: {
+          ...assistantMessage.metadata,
+          author_label: "System",
+          kind: "empty_response",
+        },
+      }],
+      next_before_cursor: null,
+    });
+    await openSessions(user);
+
+    expect(await screen.findByText(/Codex finished this turn without returning a message/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Toggle language" }));
+    expect(await screen.findByText(/Codex 已结束本轮，但没有返回任何消息/)).toBeInTheDocument();
+  });
+
   it("adds dropped files to the active session composer", async () => {
     const user = await renderApp(runningStatus);
     await openSessions(user);

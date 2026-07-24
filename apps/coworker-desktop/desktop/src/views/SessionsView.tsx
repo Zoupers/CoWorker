@@ -352,6 +352,7 @@ export function SessionsView({
           ) : sessionMessageGroups.length ? (
             sessionMessageGroups.map(({ message, result }) => {
               const attachments = result?.attachments.length ? [...message.attachments, ...result.attachments] : message.attachments;
+              const messageText = message.kind === "empty_response" ? t("sessions.emptyResponse") : message.text;
               return (
                 <article className={`sessionMessage from-${message.author_kind} kind-${message.kind}${result?.is_error ? " tool-error" : ""}`} key={message.id}>
                   <div className="messageAvatar" aria-hidden="true">
@@ -365,7 +366,7 @@ export function SessionsView({
                       {message.streaming && <em>streaming</em>}
                       <span className="messageActions">
                         <button
-                          onClick={() => void copyMessage(message.id, message.text)}
+                          onClick={() => void copyMessage(message.id, messageText)}
                           title={t("sessions.copyMessage")}
                           aria-label={t("sessions.copyMessage")}
                           type="button"
@@ -373,8 +374,8 @@ export function SessionsView({
                           {copiedMessageId === message.id ? <Check size={13} /> : <Copy size={13} />}
                         </button>
                         <button
-                          onClick={() => quoteMessage(message.text)}
-                          disabled={!canUseComposer || !message.text.trim()}
+                          onClick={() => quoteMessage(messageText)}
+                          disabled={!canUseComposer || !messageText.trim()}
                           title={t("sessions.quoteMessage")}
                           aria-label={t("sessions.quoteMessage")}
                           type="button"
@@ -383,7 +384,7 @@ export function SessionsView({
                         </button>
                       </span>
                     </div>
-                    <MessageText text={message.text} />
+                    <MessageText text={messageText} />
                     {result && <ToolResultDisclosure result={result} />}
                     {attachments.length > 0 && (
                       <div className="attachmentList">

@@ -22,8 +22,7 @@ const DEFAULT_PAGE_SIZE: usize = 80;
 const MAX_PAGE_SIZE: usize = 200;
 const MAX_TEXT_CHARS: usize = 16 * 1024;
 const JSONL_TAIL_CHUNK_BYTES: u64 = 256 * 1024;
-const EMPTY_RESPONSE_MESSAGE: &str =
-    "Codex 已结束本轮，但没有返回任何消息。请重试；如果仍然发生，请重启桌面端以重新连接 Codex。";
+const EMPTY_RESPONSE_KIND: &str = "empty_response";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionSummary {
@@ -1044,7 +1043,7 @@ fn finalize_tail_messages(
             if message.kind == "plan" {
                 pending_plan_turn = Some(message.turn_id.clone());
             }
-            if message.text == EMPTY_RESPONSE_MESSAGE {
+            if message.kind == EMPTY_RESPONSE_KIND {
                 let plan_is_this_turn = pending_plan_turn.as_ref().is_some_and(|plan_turn| {
                     plan_turn.is_none() || plan_turn.as_ref() == message.turn_id.as_ref()
                 });
@@ -1225,12 +1224,9 @@ fn parse_event_msg(
                         .unwrap_or_default()
                 ),
             ),
-            "task_complete" if payload.get("last_agent_message").is_none_or(Value::is_null) => (
-                "system",
-                "系统",
-                "system",
-                EMPTY_RESPONSE_MESSAGE.to_owned(),
-            ),
+            "task_complete" if payload.get("last_agent_message").is_none_or(Value::is_null) => {
+                ("system", "系统", EMPTY_RESPONSE_KIND, String::new())
+            }
             "item_completed" => {
                 let item = payload.get("item").and_then(Value::as_object)?;
                 if first_string(Some(item), &["type"]).as_deref() != Some("Plan") {
@@ -2601,7 +2597,8 @@ mod tests {
         let msg = parse_codex_message("thr", 0, &value, &mut HashMap::new()).expect("message");
 
         assert_eq!(msg.author_kind, "system");
-        assert!(msg.text.contains("没有返回任何消息"));
+        assert_eq!(msg.kind, EMPTY_RESPONSE_KIND);
+        assert!(msg.text.is_empty());
         assert_eq!(msg.turn_id.as_deref(), Some("turn_1"));
     }
 
