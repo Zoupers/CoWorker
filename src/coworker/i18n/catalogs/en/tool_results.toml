@@ -121,6 +121,10 @@ total = "About {{tokens}} tokens total"
 [tool_result.communicate]
 bound_participant = "This bubble can message only its bound participant; participant_id cannot be changed."
 bound_conversation = "This bubble can message only its bound conversation_id."
+bound_target_conversation = ", conversation_id='{{conversation}}'"
+bound_invalid = '''Bubble communicate arguments have {{count}} issues:
+{{issues}}
+Current fixed target: participant_id='{{participant}}'{{conversation}}'''
 attachment_fallback = "{{prefix}} (attachment)"
 extra_object = "extra must be an object."
 ambiguous = '''participant_id '{{participant}}' matches multiple channels. Call again with a complete participant_id:

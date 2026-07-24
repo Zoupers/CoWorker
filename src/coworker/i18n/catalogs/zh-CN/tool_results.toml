@@ -121,6 +121,10 @@ total = "合计约 {{tokens}} tokens"
 [tool_result.communicate]
 bound_participant = "此泡泡只能向已绑定的通信对象发送消息，不能改用其他 participant_id。"
 bound_conversation = "此泡泡只能向已绑定的 conversation_id 发送消息。"
+bound_target_conversation = ", conversation_id='{{conversation}}'"
+bound_invalid = '''Bubble communicate 参数有 {{count}} 个问题：
+{{issues}}
+当前固定目标：participant_id='{{participant}}'{{conversation}}'''
 attachment_fallback = "{{prefix}}（附件）"
 extra_object = "extra 必须是对象。"
 ambiguous = '''participant_id '{{participant}}' 在多个信道中都能匹配，请使用完整 participant_id 重新调用：

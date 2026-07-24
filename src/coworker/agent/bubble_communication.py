@@ -48,28 +48,16 @@ class BubbleCommunicateTool(CommunicateTool):
         **_,
     ) -> ToolResult:
         bubble = self._bubble
-        requested_participant = participant_id.strip() if isinstance(participant_id, str) else ""
-        if requested_participant and requested_participant != bubble.participant_id:
-            return ToolResult(
-                tool_call_id="",
-                content=tr("tool_result.communicate.bound_participant"),
-                is_error=True,
-            )
         requested_conversation = conversation_id.strip() if isinstance(conversation_id, str) else ""
-        if (
-            bubble.conversation_id
-            and requested_conversation
-            and requested_conversation != bubble.conversation_id
-        ):
+        issues = self._argument_issues(
+            participant_id,
+            conversation_id,
+            extra,
+        )
+        if issues:
             return ToolResult(
                 tool_call_id="",
-                content=tr("tool_result.communicate.bound_conversation"),
-                is_error=True,
-            )
-        if extra is not None and not isinstance(extra, dict):
-            return ToolResult(
-                tool_call_id="",
-                content=tr("tool_result.communicate.extra_object"),
+                content=self._format_argument_issues(issues),
                 is_error=True,
             )
 
@@ -101,4 +89,54 @@ class BubbleCommunicateTool(CommunicateTool):
             conversation_id=bubble.conversation_id or requested_conversation or None,
             attachments=attachments,
             extra=outgoing_extra,
+        )
+
+    def _argument_issues(
+        self,
+        participant_id: object,
+        conversation_id: object,
+        extra: object,
+    ) -> list[str]:
+        bubble = self._bubble
+        issues: list[str] = []
+        if (
+            not isinstance(participant_id, str)
+            or (
+                participant_id.strip()
+                and participant_id.strip() != bubble.participant_id
+            )
+        ):
+            issues.append(tr("tool_result.communicate.bound_participant"))
+        if (
+            conversation_id is not None
+            and (
+                not isinstance(conversation_id, str)
+                or (
+                    bubble.conversation_id
+                    and conversation_id.strip()
+                    and conversation_id.strip() != bubble.conversation_id
+                )
+            )
+        ):
+            issues.append(tr("tool_result.communicate.bound_conversation"))
+        if extra is not None and not isinstance(extra, dict):
+            issues.append(tr("tool_result.communicate.extra_object"))
+        return issues
+
+    def _format_argument_issues(self, issues: list[str]) -> str:
+        bubble = self._bubble
+        conversation = (
+            tr(
+                "tool_result.communicate.bound_target_conversation",
+                conversation=bubble.conversation_id,
+            )
+            if bubble.conversation_id
+            else ""
+        )
+        return tr(
+            "tool_result.communicate.bound_invalid",
+            count=len(issues),
+            issues="\n".join(f"- {issue}" for issue in issues),
+            participant=bubble.participant_id,
+            conversation=conversation,
         )

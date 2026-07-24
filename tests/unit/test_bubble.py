@@ -23,6 +23,7 @@ from coworker.core.types import (
     ToolCall,
     ToolResult,
 )
+from coworker.i18n import locale_context
 from coworker.tools.bubble_tools import (
     BubbleCancelTool,
     BubbleCheckTool,
@@ -2457,11 +2458,28 @@ class TestToolForkBubbleScope:
         result = await bubble_tool.execute(message="已处理")
         rejected = await bubble_tool.execute(
             participant_id="wecom:bob",
+            conversation_id="conv-2",
             message="不应发送",
+            extra=["invalid"],
         )
+        with locale_context("en"):
+            rejected_en = await bubble_tool.execute(
+                participant_id="wecom:bob",
+                conversation_id="conv-2",
+                message="must not send",
+                extra=["invalid"],
+            )
 
         assert not result.is_error
         assert rejected.is_error
+        assert "3 个问题" in rejected.content
+        assert "不能改用其他 participant_id" in rejected.content
+        assert "只能向已绑定的 conversation_id" in rejected.content
+        assert "extra 必须是对象" in rejected.content
+        assert "participant_id='wecom:alice', conversation_id='conv-1'" in rejected.content
+        assert rejected_en.is_error
+        assert "3 issues" in rejected_en.content
+        assert "participant_id='wecom:alice', conversation_id='conv-1'" in rejected_en.content
         assert bubble_tool.definition.to_schema() == tool.definition.to_schema()
         assert seen == [
             CommunicateRequest(
