@@ -31,18 +31,18 @@ def _make_runner(tmp_path) -> WeComRunner:
     return runner
 
 
-def test_checker_returns_string_chat_type(tmp_path):
+def test_resolver_returns_string_chat_type(tmp_path):
     runner = _make_runner(tmp_path)
     runner._contacts["U123"] = "single"
 
-    assert runner.checker("U123") == "wecom:single:U123"
+    assert runner.resolve_participant("U123") == "wecom:single:U123"
 
 
-def test_checker_normalizes_legacy_numeric_chat_type(tmp_path):
+def test_resolver_normalizes_legacy_numeric_chat_type(tmp_path):
     runner = _make_runner(tmp_path)
     runner._contacts["U123"] = 1
 
-    assert runner.checker("U123") == "wecom:single:U123"
+    assert runner.resolve_participant("U123") == "wecom:single:U123"
 
 
 def test_load_contacts_normalizes_legacy_numeric_values(tmp_path):

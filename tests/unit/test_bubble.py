@@ -1320,7 +1320,7 @@ class TestBubbleSpawnTool:
         outbound: asyncio.Queue[CommunicateRequest] = asyncio.Queue()
         channel_system = create_channel_system(tmp_path / "outbox")
         communicate = CommunicateTool(channel_system.registry)
-        assert channel_system.stream_runtime.register_ws(
+        assert channel_system.stream_runtime.register_session(
             participant_id, outbound, transport=transport
         )
         tool = self._make_tool(
@@ -1359,7 +1359,7 @@ class TestBubbleSpawnTool:
         outbound: asyncio.Queue = asyncio.Queue()
         channel_system = create_channel_system(tmp_path / "outbox")
         communicate = CommunicateTool(channel_system.registry)
-        assert channel_system.stream_runtime.register_ws(
+        assert channel_system.stream_runtime.register_session(
             "web-client", outbound, transport="websocket"
         )
         tool = self._make_tool(
@@ -1405,7 +1405,7 @@ class TestBubbleSpawnTool:
         outbound: asyncio.Queue[CommunicateRequest] = asyncio.Queue()
         channel_system = create_channel_system(tmp_path / "outbox")
         communicate = CommunicateTool(channel_system.registry)
-        assert channel_system.stream_runtime.register_ws(
+        assert channel_system.stream_runtime.register_session(
             participant_id, outbound, transport="websocket"
         )
         tool = self._make_tool(

@@ -57,7 +57,7 @@ class WeComRunner:
 
     Outbound delivery is delegated to :class:`WeComSender`; contact persistence
     to :class:`ContactsStore`. This class owns the WS client, the inbound frame
-    cache, and the channel-facing ``checker``/``sender`` adapters. Normalized
+    cache, and the channel-facing resolver/sender adapters. Normalized
     inbound events are emitted through the handler installed by ``WeComChannel``.
     """
 
@@ -211,7 +211,7 @@ class WeComRunner:
 
     # ── adapter for CommunicateTool ──────────────────────────────────────
 
-    def checker(self, participant_id: str) -> str | None:
+    def resolve_participant(self, participant_id: str) -> str | None:
         """若 participant_id 是已知的 WeCom chat_id，返回带前缀的规范化 ID；否则返回 None。"""
         chat_type = normalize_chat_type(self._contacts.get(participant_id))
         if chat_type is None:

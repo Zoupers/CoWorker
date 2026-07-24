@@ -18,6 +18,28 @@ All outbound communication is routed by `ChannelRegistry` to the appropriate cha
 
 To add a Channel, implement the `Channel` protocol and call `channel_system.registry.register(channel)`. A Channel owns participant resolution, raw inbound normalization, and outbound semantics; mutable connection state, background tasks, and lifecycle belong to its `runtime`. Multiple protocol profiles may share one Runtime, as Desktop and the generic Stream Channel share `StreamRuntime`. `CommunicateTool` is only the model-tool adapter for the Registry and no longer acts as a host, connection pool, or registration center.
 
+The smallest outbound Channel subclasses `BaseChannel` and implements only `send`. The defaults provide a no-op Runtime, no shorthand resolution, no inbound support, an empty connection list, and activity helpers:
+
+```python
+from coworker.channels import BaseChannel, create_channel_system
+from coworker.core.types import CommunicateRequest, ToolResult
+
+
+class TeamChannel(BaseChannel):
+    name = "team"
+    participant_prefix = "team:"
+
+    async def send(self, request: CommunicateRequest) -> ToolResult:
+        await deliver_to_team(request.participant_id, request.message)
+        return ToolResult(tool_call_id="", content="sent")
+
+
+channels = create_channel_system("data/outbox")
+channels.registry.register(TeamChannel())
+```
+
+For inbound traffic, override `receive_raw`, normalize the payload into an `IncomingEvent`, then call `publish_inbound`. For background connections, inject a `ChannelRuntime` that implements `start` and `stop`. The Registry rejects duplicate names, duplicate participant prefixes, and late registration after startup so configuration mistakes fail during composition.
+
 ## REST API
 
 ```bash

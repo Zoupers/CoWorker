@@ -33,7 +33,7 @@ from starlette.background import BackgroundTask
 from coworker.api.admin import router as admin_router
 from coworker.api.routes import router, verify_communication_authorization
 from coworker.channels.inbound import InboundEnvelope
-from coworker.channels.stream import SHUTDOWN_SENTINEL, serialize_outbound_message
+from coworker.channels.stream.wire import SHUTDOWN_SENTINEL, serialize_outbound_message
 from coworker.core.config import APIConfig, DesktopUpdatesConfig
 from coworker.core.config_export import build_config_bundle, load_effective_config
 from coworker.core.ids import new_compact_id
@@ -762,7 +762,7 @@ async def websocket_endpoint(ws: WebSocket, participant_id: str):
     queue: asyncio.Queue = asyncio.Queue()
     sender_task: asyncio.Task | None = None
 
-    if not stream.register_ws(participant_id, queue, transport="websocket"):
+    if not stream.register_session(participant_id, queue, transport="websocket"):
         logger.info(f"WS rejected duplicate participant_id: {participant_id}")
         await _reject_websocket(ws, participant_id)
         return
@@ -771,7 +771,7 @@ async def websocket_endpoint(ws: WebSocket, participant_id: str):
         try:
             queue = await stream.connect(participant_id, ws, queue)
         except ValueError:
-            stream.unregister_ws(participant_id, queue)
+            stream.unregister_session(participant_id, queue)
             logger.info(f"WS rejected duplicate participant_id: {participant_id}")
             await _reject_websocket(ws, participant_id)
             return
@@ -790,7 +790,7 @@ async def websocket_endpoint(ws: WebSocket, participant_id: str):
         logger.info(f"WS client disconnected: {participant_id}")
     finally:
         stream.disconnect(participant_id, ws=ws, queue=queue)
-        stream.unregister_ws(participant_id, queue)
+        stream.unregister_session(participant_id, queue)
         if sender_task is not None:
             sender_task.cancel()
 
@@ -811,7 +811,7 @@ async def sse_endpoint(
     stream = _channel_system.stream_runtime if _channel_system is not None else None
     registered = False
     if stream is not None:
-        registered = stream.register_ws(
+        registered = stream.register_session(
             participant_id,
             queue,
             transport="sse",
@@ -839,7 +839,7 @@ async def sse_endpoint(
                 yield _format_sse(msg)
         finally:
             if registered and stream is not None:
-                stream.unregister_ws(participant_id, queue)
+                stream.unregister_session(participant_id, queue)
             logger.info(f"SSE disconnected: {participant_id}")
 
     return StreamingResponse(

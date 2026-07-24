@@ -28,3 +28,6 @@ class InlineRuntime:
 
     async def stop(self) -> None:
         pass
+
+
+DEFAULT_RUNTIME = InlineRuntime()

@@ -1220,7 +1220,7 @@ class TestCommunicateToolCheckers:
         channel_system.registry.register(InlineChannel("plain:", sender))
         channel_system.registry.register(InlineChannel("rich:", sender, supports_extra=True))
         queue: asyncio.Queue = asyncio.Queue()
-        channel_system.stream_runtime.register_ws("stream-client", queue)
+        channel_system.stream_runtime.register_session("stream-client", queue)
 
         assert not tool.supports_message_extra("plain:alice")
         assert tool.supports_message_extra("rich:alice")
@@ -1245,7 +1245,7 @@ class TestCommunicateToolCheckers:
         assert tool.resolve_participant_id("unknown") == "unknown"
 
     @pytest.mark.asyncio
-    async def test_prefix_match_bypasses_checker(self, tmp_path):
+    async def test_prefix_match_bypasses_resolver(self, tmp_path):
         channel_system = create_channel_system(tmp_path / "outbox")
         tool = CommunicateTool(channel_system.registry)
         sent = []
@@ -1379,7 +1379,7 @@ class TestCommunicateToolCheckers:
         channel_system = create_channel_system(tmp_path / "outbox")
         tool = CommunicateTool(channel_system.registry)
         queue: asyncio.Queue = asyncio.Queue()
-        assert channel_system.stream_runtime.register_ws("alice", queue) is True
+        assert channel_system.stream_runtime.register_session("alice", queue) is True
 
         result = await tool.execute(
             participant_id="alice",
@@ -1409,7 +1409,7 @@ class TestCommunicateToolCheckers:
         channel_system.registry.register(InlineChannel(DESKTOP_PREFIX, sender.send))
         queue: asyncio.Queue = asyncio.Queue()
         participant_id = "coworker-desktop:desk-1:claude:cw-1:abcd1234"
-        assert channel_system.stream_runtime.register_ws(participant_id, queue) is True
+        assert channel_system.stream_runtime.register_session(participant_id, queue) is True
 
         result = await tool.execute(
             participant_id=participant_id,
@@ -1423,7 +1423,7 @@ class TestCommunicateToolCheckers:
         assert len(request.extra["request_id"]) == 16
         assert "request_id=" in result.content
 
-        channel_system.stream_runtime.unregister_ws(participant_id, queue)
+        channel_system.stream_runtime.unregister_session(participant_id, queue)
         offline = await tool.execute(participant_id=participant_id, message="retry")
         assert offline.is_error
         assert "未连接" in offline.content

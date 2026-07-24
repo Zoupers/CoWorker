@@ -18,6 +18,28 @@
 
 新增 Channel 时实现 `Channel` 协议并调用 `channel_system.registry.register(channel)` 即可。Channel 负责 participant 解析、原始入站归一化和出站语义；可变连接状态、后台任务及启停逻辑放在它的 `runtime`。多个协议 profile 可以共享同一个 Runtime，Desktop 就与通用 Stream Channel 共享 `StreamRuntime`。`CommunicateTool` 只是 Registry 的模型工具适配器，不再兼任宿主、连接池或注册中心。
 
+最小出站 Channel 只需继承 `BaseChannel` 并实现 `send`；默认已包含空 Runtime、无简写解析、无入站、无连接列表和 activity 辅助方法：
+
+```python
+from coworker.channels import BaseChannel, create_channel_system
+from coworker.core.types import CommunicateRequest, ToolResult
+
+
+class TeamChannel(BaseChannel):
+    name = "team"
+    participant_prefix = "team:"
+
+    async def send(self, request: CommunicateRequest) -> ToolResult:
+        await deliver_to_team(request.participant_id, request.message)
+        return ToolResult(tool_call_id="", content="sent")
+
+
+channels = create_channel_system("data/outbox")
+channels.registry.register(TeamChannel())
+```
+
+需要入站时覆写 `receive_raw`，归一化为 `IncomingEvent` 后调用 `publish_inbound`；需要后台连接时注入实现了 `start` / `stop` 的 `ChannelRuntime`。Registry 会拒绝重复名称、重复 participant 前缀和启动后的迟到注册，让配置错误在启动阶段直接暴露。
+
 ## REST API
 
 ```bash

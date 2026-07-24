@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 import re
-from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -38,46 +38,46 @@ class StreamRuntime:
         self._last_sent_at: dict[str, str] = {}
         self._last_received_at: dict[str, str] = {}
 
-    @property
-    def pool(self) -> ConnectionPool:
-        return self._pool
-
-    def register_ws(
-        self, participant_id: str, queue: Any, *, transport: str = "websocket"
+    def register_session(
+        self,
+        participant_id: str,
+        queue: asyncio.Queue[Any],
+        *,
+        transport: str = "websocket",
     ) -> bool:
-        return self._pool.register_ws(participant_id, queue, transport=transport)
+        return self._pool.register_session(participant_id, queue, transport=transport)
 
-    def unregister_ws(self, participant_id: str, queue: Any) -> None:
-        self._pool.unregister_ws(participant_id, queue)
+    def unregister_session(self, participant_id: str, queue: asyncio.Queue[Any]) -> None:
+        self._pool.unregister_session(participant_id, queue)
 
-    def outbound_queue(self, participant_id: str) -> Any | None:
+    def outbound_queue(self, participant_id: str) -> asyncio.Queue[Any] | None:
         return self._pool.outbound_queue(participant_id)
 
     def live_stream_transport(self, participant_id: str) -> str | None:
         return self._pool.live_stream_transport(participant_id)
 
-    def has_live_stream_connection(
-        self, participant_id: str, *, transports: Iterable[str] | None = None
-    ) -> bool:
-        return self._pool.has_live_stream_connection(participant_id, transports=transports)
-
     def add_connection_listener(self, listener: Any) -> None:
         self._pool.add_connection_listener(listener)
 
-    async def connect(self, participant_id: str, ws: WebSocket, queue: Any) -> Any:
+    async def connect(
+        self,
+        participant_id: str,
+        ws: WebSocket,
+        queue: asyncio.Queue[Any],
+    ) -> asyncio.Queue[Any]:
         return await self._pool.connect(participant_id, ws, queue)
 
     def disconnect(
-        self, participant_id: str, ws: WebSocket, queue: Any
+        self, participant_id: str, ws: WebSocket, queue: asyncio.Queue[Any]
     ) -> None:
         self._pool.disconnect(participant_id, ws=ws, queue=queue)
 
-    def is_connected(
-        self, participant_id: str, ws: WebSocket, queue: Any
-    ) -> bool:
-        return self._pool.is_connected(participant_id, ws=ws, queue=queue)
-
-    async def run_sender(self, participant_id: str, queue: Any, ws: WebSocket) -> None:
+    async def run_sender(
+        self,
+        participant_id: str,
+        queue: asyncio.Queue[Any],
+        ws: WebSocket,
+    ) -> None:
         await self._pool.run_sender(participant_id, queue, ws)
 
     def shutdown(self) -> None:

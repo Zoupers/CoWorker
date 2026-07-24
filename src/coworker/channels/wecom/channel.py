@@ -1,7 +1,7 @@
 """WeComChannel: the WeCom transport as a Channel.
 
 Wraps :class:`WeComRunner` (WS lifecycle, outbound send, contacts). Outbound
-routing uses the runner's ``sender``/``checker``; ``list_connections`` exposes
+routing uses the runner's ``sender``/``resolve_participant``; ``list_connections`` exposes
 known WeCom group chats and single-chat users (the user-requested visibility
 into WeCom reachables), including the latest send and receive times.
 """
@@ -24,7 +24,7 @@ class WeComChannel(InlineChannel):
         super().__init__(
             "wecom:",
             runner.sender,
-            checker=runner.checker,
+            resolver=runner.resolve_participant,
             supports_extra=False,
             name="wecom",
             runtime=runner,

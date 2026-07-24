@@ -26,16 +26,16 @@ class ConnectionPool:
 
     def __init__(self) -> None:
         self._connections: dict[str, WebSocket] = {}
-        self._outboxes: dict[str, asyncio.Queue] = {}
+        self._outboxes: dict[str, asyncio.Queue[Any]] = {}
         self._transports: dict[str, str] = {}
         self._connection_listeners: list[Any] = []
 
     # ---------------------------------------------------------- registration
 
-    def register_ws(
+    def register_session(
         self,
         participant_id: str,
-        queue: asyncio.Queue,
+        queue: asyncio.Queue[Any],
         *,
         transport: str = "websocket",
     ) -> bool:
@@ -53,14 +53,16 @@ class ConnectionPool:
         self._notify_connection_listeners()
         return True
 
-    def unregister_ws(self, participant_id: str, queue: asyncio.Queue) -> None:
+    def unregister_session(
+        self, participant_id: str, queue: asyncio.Queue[Any]
+    ) -> None:
         if self._outboxes.get(participant_id) is not queue:
             return
         self._outboxes.pop(participant_id, None)
         self._transports.pop(participant_id, None)
         self._notify_connection_listeners()
 
-    def outbound_queue(self, participant_id: str) -> asyncio.Queue | None:
+    def outbound_queue(self, participant_id: str) -> asyncio.Queue[Any] | None:
         return self._outboxes.get(participant_id)
 
     def live_stream_transport(self, participant_id: str) -> str | None:
@@ -88,8 +90,8 @@ class ConnectionPool:
         self,
         participant_id: str,
         ws: WebSocket,
-        queue: asyncio.Queue,
-    ) -> asyncio.Queue:
+        queue: asyncio.Queue[Any],
+    ) -> asyncio.Queue[Any]:
         if (
             participant_id in self._connections
             or self._outboxes.get(participant_id) is not queue
@@ -106,7 +108,7 @@ class ConnectionPool:
         self,
         participant_id: str,
         ws: WebSocket,
-        queue: asyncio.Queue,
+        queue: asyncio.Queue[Any],
     ) -> None:
         if self._connections.get(participant_id) is not ws:
             return
@@ -124,7 +126,7 @@ class ConnectionPool:
         self,
         participant_id: str,
         ws: WebSocket,
-        queue: asyncio.Queue,
+        queue: asyncio.Queue[Any],
     ) -> bool:
         return (
             self._connections.get(participant_id) is ws
@@ -136,7 +138,7 @@ class ConnectionPool:
         participant_id: str,
         message: Any,
         ws: WebSocket,
-        queue: asyncio.Queue,
+        queue: asyncio.Queue[Any],
     ) -> None:
         try:
             await ws.send_text(serialize_outbound_message(message))
@@ -147,7 +149,7 @@ class ConnectionPool:
     async def run_sender(
         self,
         participant_id: str,
-        queue: asyncio.Queue,
+        queue: asyncio.Queue[Any],
         ws: WebSocket,
     ) -> None:
         while self.is_connected(participant_id, ws=ws, queue=queue):

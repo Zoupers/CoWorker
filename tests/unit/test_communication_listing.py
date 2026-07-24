@@ -49,7 +49,7 @@ async def test_list_connections_uses_english_catalog():
 async def test_stream_connection_records_send_and_receive_times(tmp_path):
     stream = StreamRuntime(tmp_path / "outbox", tmp_path / "registrations.json")
     queue: asyncio.Queue = asyncio.Queue()
-    assert stream.register_ws("alice", queue)
+    assert stream.register_session("alice", queue)
 
     result = await stream.send(CommunicateRequest(participant_id="alice", message="hello"))
     stream.record_received("alice")

@@ -124,10 +124,6 @@ class CommunicateTool(Tool):
     def __init__(self, channels: ChannelRegistry) -> None:
         self._channels = channels
 
-    @property
-    def channels(self) -> ChannelRegistry:
-        return self._channels
-
     def fork(self, scope: ToolScope) -> Tool:
         participant_id = str(getattr(scope, "communicate_participant_id", "")).strip()
         if not participant_id:

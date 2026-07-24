@@ -27,6 +27,7 @@ class LabCommunicateTool(CommunicateTool):
         virtual_connections: list[str] | tuple[str, ...] = DEFAULT_LAB_VIRTUAL_CONNECTIONS,
     ) -> None:
         super().__init__(channels)
+        self._channel_registry = channels
         self._virtual_connections: set[str] = set()
         self._outbound_messages: list[dict[str, Any]] = []
         self._virtual_last_sent_at: dict[str, str] = {}
@@ -44,7 +45,7 @@ class LabCommunicateTool(CommunicateTool):
         return sorted(self._virtual_connections)
 
     def list_connections(self) -> list[ConnectionInfo]:
-        infos = self.channels.list_connections()
+        infos = self._channel_registry.list_connections()
         known_participants = {info.participant_id for info in infos}
         infos.extend(
             ConnectionInfo(
@@ -68,7 +69,7 @@ class LabCommunicateTool(CommunicateTool):
                 timespec="seconds"
             )
             return
-        self.channels.record_received(participant_id)
+        self._channel_registry.record_received(participant_id)
 
     async def execute(
         self,

@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
-
 import pytest
 
-from coworker.channels.base import ConnectionInfo, ParticipantIdResolutionError
+from coworker.channels.base import BaseChannel, ConnectionInfo, ParticipantIdResolutionError
 from coworker.channels.registry import ChannelRegistry
-from coworker.core.types import CommunicateRequest, IncomingEvent, ToolResult
+from coworker.core.types import CommunicateRequest, ToolResult
 
 
 class _FakeChannel:
@@ -64,9 +62,47 @@ class _FakeChannel:
         self.stopped = True
 
 
+class _MinimalChannel(BaseChannel):
+    name = "minimal"
+    participant_prefix = "minimal:"
+
+    async def send(self, request: CommunicateRequest) -> ToolResult:
+        return ToolResult(tool_call_id="", content=request.message)
+
+
+class _FailingRuntimeChannel(_MinimalChannel):
+    name = "failing"
+    participant_prefix = "failing:"
+
+    def __init__(self) -> None:
+        super().__init__(runtime=self)
+
+    async def start(self) -> None:
+        raise OSError("cannot connect")
+
+    async def stop(self) -> None:
+        pass
+
+
 @pytest.fixture()
 def registry() -> ChannelRegistry:
     return ChannelRegistry()
+
+
+@pytest.mark.asyncio
+async def test_base_channel_only_requires_outbound_implementation(
+    registry: ChannelRegistry,
+) -> None:
+    channel = _MinimalChannel()
+    registry.register(channel)
+
+    result = await registry.send(
+        CommunicateRequest(participant_id="minimal:alice", message="hello")
+    )
+
+    assert result.content == "hello"
+    assert channel.list_connections() == []
+    assert channel.resolve("alice") is None
 
 
 @pytest.mark.asyncio
@@ -86,7 +122,7 @@ async def test_longest_prefix_wins(registry: ChannelRegistry) -> None:
 
 
 @pytest.mark.asyncio
-async def test_prefix_match_bypasses_checker(registry: ChannelRegistry) -> None:
+async def test_prefix_match_bypasses_resolver(registry: ChannelRegistry) -> None:
     channel = _FakeChannel(
         "channel",
         "channel:",
@@ -199,18 +235,6 @@ def test_list_connections_aggregates_across_channels(registry: ChannelRegistry) 
 
 
 @pytest.mark.asyncio
-async def test_inbound_events_are_delivered_by_the_registry() -> None:
-    registry = ChannelRegistry()
-    handler = AsyncMock()
-    registry.set_inbound_handler(handler)
-
-    event = IncomingEvent(participant_id="alice", content="hello")
-    await registry.publish_inbound(event)
-
-    handler.assert_awaited_once_with(event)
-
-
-@pytest.mark.asyncio
 async def test_shared_runtime_starts_and_stops_once(registry: ChannelRegistry) -> None:
     stream = _FakeChannel("stream", "")
     desktop = _FakeChannel("desktop", "coworker-desktop:")
@@ -227,8 +251,63 @@ async def test_shared_runtime_starts_and_stops_once(registry: ChannelRegistry) -
     assert not desktop.stopped
 
 
+@pytest.mark.asyncio
+async def test_stop_before_start_is_a_noop(registry: ChannelRegistry) -> None:
+    channel = _FakeChannel("stream", "")
+    registry.register(channel)
+
+    await registry.stop()
+
+    assert not channel.stopped
+
+
 def test_duplicate_fallback_is_rejected(registry: ChannelRegistry) -> None:
     registry.register(_FakeChannel("stream", ""))
 
     with pytest.raises(ValueError, match="fallback channel already registered"):
         registry.register(_FakeChannel("other", ""))
+
+
+def test_duplicate_name_is_rejected(registry: ChannelRegistry) -> None:
+    registry.register(_FakeChannel("chat", "chat:"))
+
+    with pytest.raises(ValueError, match="channel name already registered"):
+        registry.register(_FakeChannel("chat", "other:"))
+
+
+def test_duplicate_prefix_is_rejected(registry: ChannelRegistry) -> None:
+    registry.register(_FakeChannel("chat", "chat:"))
+
+    with pytest.raises(ValueError, match="participant prefix already registered"):
+        registry.register(_FakeChannel("other", "chat:"))
+
+
+def test_invalid_runtime_is_rejected_during_registration(
+    registry: ChannelRegistry,
+) -> None:
+    channel = _MinimalChannel()
+    setattr(channel, "_runtime", object())
+
+    with pytest.raises(TypeError, match="must implement ChannelRuntime"):
+        registry.register(channel)
+
+
+@pytest.mark.asyncio
+async def test_registration_after_start_is_rejected(registry: ChannelRegistry) -> None:
+    registry.register(_FakeChannel("stream", ""))
+    await registry.start()
+
+    with pytest.raises(RuntimeError, match="while the registry is running"):
+        registry.register(_FakeChannel("late", "late:"))
+
+    await registry.stop()
+
+
+@pytest.mark.asyncio
+async def test_immediate_runtime_start_failure_is_reported(
+    registry: ChannelRegistry,
+) -> None:
+    registry.register(_FailingRuntimeChannel())
+
+    with pytest.raises(RuntimeError, match="cannot connect"):
+        await registry.start()

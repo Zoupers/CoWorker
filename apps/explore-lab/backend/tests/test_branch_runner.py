@@ -341,7 +341,10 @@ class TestLabCommunicate:
         snapshot = controller.state_snapshot()
 
         assert snapshot["virtual_connections"] == ["explore_lab"]
-        assert controller.runtime.communicate.channels.list_connections() == []
+        assert [
+            connection.participant_id
+            for connection in controller.runtime.communicate.list_connections()
+        ] == ["explore_lab"]
         assert "communicate" not in snapshot["tool_intercepts"]
         assert "list_connections" not in snapshot["tool_intercepts"]
 

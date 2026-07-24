@@ -16,7 +16,8 @@ from coworker.api import app as api_app
 from coworker.api.routes import setup as setup_routes
 from coworker.brain.brain import Brain
 from coworker.channels.desktop import DesktopChannel, DesktopDispatcher, DesktopRegistry
-from coworker.channels.stream import ConnectionPool, serialize_outbound_message
+from coworker.channels.stream.connection_pool import ConnectionPool
+from coworker.channels.stream.wire import serialize_outbound_message
 from coworker.channels.system import ChannelSystem, create_channel_system
 from coworker.core.config import APIConfig
 from coworker.core.types import AgentState, CommunicateRequest
@@ -37,6 +38,7 @@ def _communication_with_desktop(tmp_path, handler) -> ChannelSystem:
     dispatcher = DesktopDispatcher(registry)
     sender = MagicMock()
     sender.send = AsyncMock()
+    sender.runtime = communication.stream_runtime
     communication.registry.register(
         DesktopChannel(sender, registry, dispatcher, tmp_path / "attachments")
     )
@@ -481,14 +483,14 @@ class TestUnregisterWsGuard:
         stream = create_channel_system("unused").stream_runtime
         first_q: asyncio.Queue = asyncio.Queue()
         second_q: asyncio.Queue = asyncio.Queue()
-        assert stream.register_ws("alice", first_q) is True
-        assert stream.register_ws("alice", second_q) is False
+        assert stream.register_session("alice", first_q) is True
+        assert stream.register_session("alice", second_q) is False
         assert stream.outbound_queue("alice") is first_q
         # 被拒绝的 queue 不应删掉先到的连接
-        stream.unregister_ws("alice", second_q)
+        stream.unregister_session("alice", second_q)
         assert stream.outbound_queue("alice") is first_q
         # 用匹配的 queue 注销才生效
-        stream.unregister_ws("alice", first_q)
+        stream.unregister_session("alice", first_q)
         assert stream.outbound_queue("alice") is None
 
     def test_connection_listener_only_fires_on_real_connection_changes(self):
@@ -501,14 +503,14 @@ class TestUnregisterWsGuard:
         first_q: asyncio.Queue = asyncio.Queue()
         second_q: asyncio.Queue = asyncio.Queue()
 
-        assert stream.register_ws("alice", first_q) is True
+        assert stream.register_session("alice", first_q) is True
         assert events == [["alice"]]
 
-        assert stream.register_ws("alice", second_q) is False
-        stream.unregister_ws("alice", second_q)
+        assert stream.register_session("alice", second_q) is False
+        stream.unregister_session("alice", second_q)
         assert events == [["alice"]]
 
-        stream.unregister_ws("alice", first_q)
+        stream.unregister_session("alice", first_q)
         assert events == [["alice"], []]
 
 
@@ -573,7 +575,7 @@ class TestConnectionRejection:
 
     def test_sse_duplicate_gets_rejection_event(self, client, tmp_path):
         comm = _channel_system(tmp_path)
-        assert comm.stream_runtime.register_ws("alice", asyncio.Queue()) is True
+        assert comm.stream_runtime.register_session("alice", asyncio.Queue()) is True
         _setup_api_channels(comm)
 
         resp = client.get("/sse/alice")
@@ -705,7 +707,9 @@ class TestCommunicateRegistrationAPI:
                 "metadata": {"protocol_versions": [1]},
             },
         ).json()
-        assert comm.stream_runtime.register_ws(first["participant_id"], asyncio.Queue()) is True
+        assert comm.stream_runtime.register_session(
+            first["participant_id"], asyncio.Queue()
+        ) is True
 
         second = client.post(
             "/api/communicate/register",
@@ -1329,7 +1333,7 @@ class TestDesktopUpdatesAPI:
                 },
             )
             queue = asyncio.Queue()
-            communicate.stream_runtime.register_ws(registration["participant_id"], queue)
+            communicate.stream_runtime.register_session(registration["participant_id"], queue)
             return queue
 
         old_local = register("desk-old:local:cw", "desk-old", "0.1.0", ["desktop_update_push"])

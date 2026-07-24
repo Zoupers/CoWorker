@@ -3,43 +3,34 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
-from coworker.channels.base import ConnectionInfo, InboundHandler
+from coworker.channels.base import BaseChannel, ConnectionInfo
 from coworker.channels.inbound import InboundEnvelope
 from coworker.channels.stream.runtime import StreamRuntime
 from coworker.core.types import CommunicateRequest, IncomingEvent, ToolResult
 
 
-class StreamChannel:
+class StreamChannel(BaseChannel):
     """Normalize stream messages while delegating state to ``StreamRuntime``."""
 
     name = "stream"
     participant_prefix = ""
 
     def __init__(self, runtime: StreamRuntime) -> None:
-        self._runtime = runtime
-        self._inbound_handler: InboundHandler | None = None
+        super().__init__(runtime=runtime)
 
     @property
     def runtime(self) -> StreamRuntime:
-        return self._runtime
+        return cast(StreamRuntime, self._runtime)
 
     def resolve(self, participant_id: str) -> str | None:
         return None
 
-    def set_inbound_handler(self, handler: InboundHandler | None) -> None:
-        self._inbound_handler = handler
-
-    async def publish_inbound(self, event: IncomingEvent) -> None:
-        if self._inbound_handler is None:
-            raise RuntimeError("no inbound handler registered")
-        await self._inbound_handler(event)
-
     async def receive_raw(self, envelope: InboundEnvelope) -> None:
         content, conversation_id, raw_attachments = self._parse_inbound(envelope)
         attachments = [
-            self._runtime.save_attachment(
+            self.runtime.save_attachment(
                 item,
                 keep_inline_data=envelope.source != "desktop",
             )
@@ -57,16 +48,16 @@ class StreamChannel:
         )
 
     def supports_extra_for(self, participant_id: str) -> bool:
-        return self._runtime.supports_message_extra(participant_id)
+        return self.runtime.supports_message_extra(participant_id)
 
     async def send(self, request: CommunicateRequest) -> ToolResult:
-        return await self._runtime.send(request)
+        return await self.runtime.send(request)
 
     def list_connections(self) -> list[ConnectionInfo]:
-        return self._runtime.list_connections()
+        return self.runtime.list_connections()
 
     def record_received(self, participant_id: str) -> None:
-        self._runtime.record_received(participant_id)
+        self.runtime.record_received(participant_id)
 
     @staticmethod
     def _parse_inbound(
