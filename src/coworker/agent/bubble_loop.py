@@ -252,7 +252,10 @@ class BubbleMiniLoop:
                 if (
                     bubble.handoff_transparency
                     and self._communicate is not None
-                    and self._communicate.supports_message_extra(bubble.participant_id)
+                    and self._communicate.supports_message_extra(
+                        bubble.participant_id,
+                        bubble_reply_message_extra(bubble.id),
+                    )
                 )
                 else {}
             ),

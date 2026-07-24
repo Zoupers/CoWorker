@@ -301,6 +301,48 @@ async def test_channel_delivers_message_and_reports_unsupported_fields(tmp_path)
     )
 
     assert not result.is_error
-    assert "不支持 extra" in result.content
+    assert "extra 不支持字段：mode" in result.content
+    assert "支持字段：mentioned_list" in result.content
     assert "不支持 conversation_id" not in result.content
     runner._client.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_channel_maps_mentioned_list_to_markdown_mentions(tmp_path):
+    runner = _make_runner(tmp_path)
+    registry = ChannelRegistry()
+    registry.register(WeComChannel(runner))
+
+    result = await registry.send(
+        CommunicateRequest(
+            participant_id="wecom:group:TEAM",
+            message="请看这里",
+            extra={
+                "mentioned_list": ["alice", " bob ", "alice", ""],
+                "mode": "plan",
+            },
+        )
+    )
+
+    assert not result.is_error
+    assert "extra 不支持字段：mode" in result.content
+    assert "支持字段：mentioned_list" in result.content
+    _, body = runner._client.send_message.await_args.args
+    assert body == {
+        "msgtype": "markdown",
+        "markdown": {"content": "<@alice> <@bob>\n请看这里"},
+    }
+
+
+def test_wecom_reports_only_supported_extra_features(tmp_path):
+    runner = _make_runner(tmp_path)
+    channel = WeComChannel(runner)
+
+    assert channel.supports_extra(
+        "wecom:group:TEAM",
+        {"mentioned_list": ["alice"]},
+    )
+    assert not channel.supports_extra(
+        "wecom:group:TEAM",
+        {"kind": "reply"},
+    )

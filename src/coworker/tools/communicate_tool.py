@@ -139,9 +139,13 @@ class CommunicateTool(Tool):
             message_extra if isinstance(message_extra, dict) else {},
         )
 
-    def supports_message_extra(self, participant_id: str) -> bool:
+    def supports_message_extra(
+        self,
+        participant_id: str,
+        extra: dict[str, object] | None = None,
+    ) -> bool:
         """Whether the participant's selected transport accepts structured ``extra``."""
-        return self._channels.supports_message_extra(participant_id)
+        return self._channels.supports_message_extra(participant_id, extra)
 
     def resolve_participant_id(self, participant_id: str) -> str:
         """Expand a shorthand participant ID without sending a message.
@@ -201,6 +205,13 @@ class CommunicateTool(Tool):
                     "extra": {
                         "type": "object",
                         "description": "低频信道扩展；具体白名单由目标信道决定。",
+                        "properties": {
+                            "mentioned_list": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "企业微信 Markdown 中需要提醒的 userid 列表。",
+                            },
+                        },
                     },
                 },
                 "required": ["participant_id"],

@@ -220,12 +220,14 @@ class WeComRunner:
         message: str,
         attachments: list[dict[str, Any]],
         conversation_id: str | None = None,
+        mentioned_list: list[str] | None = None,
     ) -> None:
         await self._sender.send(
             participant_id,
             message,
             attachments,
             conversation_id,
+            mentioned_list,
         )
         _, chat_id = adapter.parse_participant(participant_id)
         self._last_sent_at[chat_id] = datetime.now().astimezone().isoformat(timespec="seconds")

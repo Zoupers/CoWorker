@@ -48,6 +48,8 @@ Channel 通过 `ChannelCapabilities` 声明是否支持 `conversation_id`、`att
 
 企业微信入站事件会把 frame 的 `req_id`（缺失时使用 `msgid`）作为 `conversation_id` 展示给 AI。回复时传回该值即可精确使用对应 frame；如果指定 frame 已过期或不存在，则改用主动消息发送，不会误用同一 chat 的其他 frame。
 
+企业微信群消息可通过 `extra={"mentioned_list":["userid1","userid2"]}` 提醒成员。WeCom Channel 会将其转换为 Markdown 内联 `<@userid>`。WeCom 支持 `extra`，但目前只实现 `mentioned_list`；如果请求还包含其他字段，正文和受支持字段仍会发送，返回结果会一次性列出不支持的字段和当前支持字段。
+
 需要入站时覆写 `receive_raw`，归一化为 `IncomingEvent` 后调用 `publish_inbound`；需要后台连接时注入实现了 `start` / `stop` 的 `ChannelRuntime`。Registry 会拒绝重复名称、重复 participant 前缀和启动后的迟到注册，让配置错误在启动阶段直接暴露。
 
 ## REST API

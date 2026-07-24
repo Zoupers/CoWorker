@@ -115,6 +115,13 @@ class BaseChannel(ABC):
     def resolve(self, participant_id: str) -> str | None:
         return None
 
+    def supports_extra(
+        self,
+        participant_id: str,
+        extra: dict[str, Any] | None = None,
+    ) -> bool:
+        return self.capabilities_for(participant_id).extra
+
     def set_inbound_handler(self, handler: InboundHandler | None) -> None:
         self._inbound_handler = handler
 

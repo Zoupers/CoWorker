@@ -64,10 +64,14 @@ class ChannelRegistry:
         canonical, _ = self._resolve(participant_id)
         return canonical
 
-    def supports_message_extra(self, participant_id: str) -> bool:
+    def supports_message_extra(
+        self,
+        participant_id: str,
+        extra: dict[str, object] | None = None,
+    ) -> bool:
         canonical, channel = self._resolve(participant_id)
         target = channel if channel is not None else self._fallback
-        return target.capabilities_for(canonical).extra if target is not None else False
+        return target.supports_extra(canonical, extra) if target is not None else False
 
     async def send(self, request: CommunicateRequest) -> ToolResult:
         canonical, channel = self._resolve(request.participant_id)

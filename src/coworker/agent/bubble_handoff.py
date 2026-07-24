@@ -153,7 +153,12 @@ class BubbleHandoffNotifier:
             return
         try:
             outgoing_extra = (
-                extra if self._communicate.supports_message_extra(bubble.participant_id) else None
+                extra
+                if self._communicate.supports_message_extra(
+                    bubble.participant_id,
+                    extra,
+                )
+                else None
             )
             result = await self._communicate.execute(
                 participant_id=bubble.participant_id,
